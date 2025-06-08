@@ -264,18 +264,18 @@ public class AutoPilot
                         tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
                         tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.Loot));
 
-                    else if (!hasUsedWp && AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints)
-                    {
-                        var waypoint = AreWeThereYet.Instance.GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type ==EntityType.Waypoint &&
-                                                                                                                       Vector3.Distance(AreWeThereYet.Instance.playerPosition, I.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance);
+                    // else if (!hasUsedWp && AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints)
+                    // {
+                    //     var waypoint = AreWeThereYet.Instance.GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type ==EntityType.Waypoint &&
+                    //                                                                                                    Vector3.Distance(AreWeThereYet.Instance.playerPosition, I.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance);
 
-                        if (waypoint != null)
-                        {
-                            hasUsedWp = true;
-                            tasks.Add(new TaskNode(waypoint.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.ClaimWaypoint));
-                        }
+                    //     if (waypoint != null)
+                    //     {
+                    //         hasUsedWp = true;
+                    //         tasks.Add(new TaskNode(waypoint.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.ClaimWaypoint));
+                    //     }
 
-                    }
+                    // }
                 }
                 if (followTarget?.Pos != null)
                     lastTargetPosition = followTarget.Pos;

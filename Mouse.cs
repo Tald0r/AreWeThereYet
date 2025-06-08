@@ -1,4 +1,3 @@
-// Mouse.cs
 using System;
 using System.Collections;
 using System.Runtime.InteropServices;

@@ -1,4 +1,3 @@
-// TaskNode.cs
 using ExileCore.PoEMemory.Elements;
 using SharpDX;
 

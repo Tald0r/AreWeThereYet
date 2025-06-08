@@ -1,4 +1,3 @@
-// ImGuiDrawSettings.cs
 using System;
 using System.Linq;
 using System.Threading;
@@ -12,8 +11,6 @@ namespace AreWeThereYet;
 
 internal class ImGuiDrawSettings
 {
-    private static Vector4 _donationColorTarget = new Vector4(0.454f, 0.031f, 0.768f, 1f);
-    private static Vector4 _donationColorCurrent = new Vector4(0.454f, 0.031f, 0.768f, 1f);
     private static void SetText(string pText)
     {
         var staThread = new Thread(
@@ -63,46 +60,14 @@ internal class ImGuiDrawSettings
                     "Move Key: " + AreWeThereYet.Instance.Settings.autoPilotMoveKey.Value, AreWeThereYet.Instance.Settings.autoPilotMoveKey);
                 AreWeThereYet.Instance.Settings.autoPilotToggleKey.Value = ImGuiExtension.HotkeySelector(
                     "Toggle Key: " + AreWeThereYet.Instance.Settings.autoPilotToggleKey.Value, AreWeThereYet.Instance.Settings.autoPilotToggleKey);
-                AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints.Value = ImGuiExtension.Checkbox(
-                    "Take Waypoints", AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints.Value);
+                // AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints.Value = ImGuiExtension.Checkbox(
+                //     "Take Waypoints", AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints.Value);
                 AreWeThereYet.Instance.Settings.autoPilotInputFrequency.Value =
                     ImGuiExtension.IntSlider("Input Freq.", AreWeThereYet.Instance.Settings.autoPilotInputFrequency);
                 AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance.Value =
                     ImGuiExtension.IntSlider("Keep within Distance", AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance);
                 AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value =
                     ImGuiExtension.IntSlider("Transition Distance", AreWeThereYet.Instance.Settings.autoPilotClearPathDistance);
-            }
-        }
-        catch (Exception e)
-        {
-            AreWeThereYet.Instance.LogError(e.ToString());
-        }
-
-        try
-        {
-            if (_donationColorCurrent.X == _donationColorTarget.X &&
-                _donationColorCurrent.Y == _donationColorTarget.Y &&
-                _donationColorCurrent.Z == _donationColorTarget.Z)
-            {
-                _donationColorTarget = new Vector4(Helper.random.NextFloat(0, 1), Helper.random.NextFloat(0, 1),
-                    Helper.random.NextFloat(0, 1), 1f);
-            }
-            else
-            {
-                var deltaTime = 1f / 60f;
-                    
-                _donationColorCurrent.X = Helper.MoveTowards(_donationColorCurrent.X, _donationColorTarget.X, deltaTime);
-                _donationColorCurrent.Y = Helper.MoveTowards(_donationColorCurrent.Y, _donationColorTarget.Y, deltaTime);
-                _donationColorCurrent.Z = Helper.MoveTowards(_donationColorCurrent.Z, _donationColorTarget.Z, deltaTime);
-            }
-            ImGui.PushStyleColor(ImGuiCol.Header, _donationColorCurrent);
-            ImGui.PushID(99999);
-            if (ImGui.TreeNodeEx("Debug and Safety", collapsingHeaderFlags))
-            {
-                AreWeThereYet.Instance.Settings.debugMode.Value = ImGuiExtension.Checkbox("Turn on Debug Mode",
-                    AreWeThereYet.Instance.Settings.debugMode.Value);
-                AreWeThereYet.Instance.Settings.autoQuitHotkeyEnabled.Value = ImGuiExtension.Checkbox("Enable Auto Quit Hotkey",
-                    AreWeThereYet.Instance.Settings.autoQuitHotkeyEnabled.Value);
             }
         }
         catch (Exception e)
