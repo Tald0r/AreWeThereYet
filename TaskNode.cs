@@ -35,6 +35,7 @@ public class TaskNode
         Type = type;
         Bounds = bounds;
     }
+
     public TaskNode(LabelOnGround labelOnGround, int bounds, TaskNodeType type = TaskNodeType.Movement)
     {
         LabelOnGround = labelOnGround;
@@ -42,6 +43,7 @@ public class TaskNode
         Bounds = bounds;
     }
 }
+
 public enum TaskNodeType
 {
     Movement,

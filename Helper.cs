@@ -15,6 +15,7 @@ public static class Helper
             return tar;
         return cur + Math.Sign(tar - cur) * max;
     }
+    
     internal static Vector2 WorldToValidScreenPosition(Vector3 worldPos)
     {
         var windowRect = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle();

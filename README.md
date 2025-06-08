@@ -8,11 +8,11 @@ A standalone AutoPilot plugin for Path of Exile that follows party leaders and a
 
 - Follow party leader automatically
 - Portal detection and usage
-- Waypoint collection - obsolate will be removed
 - Quest item pickup
 - Dash support for movement skills
 - Grace period handling
 - Configurable hotkeys and settings
+- - Configurable input delays
 
 ## Installation
 
@@ -30,15 +30,3 @@ A standalone AutoPilot plugin for Path of Exile that follows party leaders and a
 - **Follow Distance**: Distance to maintain from leader
 - **Transition Distance**: Detection range for portals and transitions
 
-## Dependencies
-
-- ExileCore API
-- ImGui.NET
-- SharpDX
-- .NET Framework 4.8
-
-## Safety Features
-
-- Grace period detection
-- UI interaction prevention
-- Configurable input delays
