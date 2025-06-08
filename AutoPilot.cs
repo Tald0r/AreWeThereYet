@@ -22,7 +22,6 @@ public class AutoPilot
     private Vector3 lastPlayerPosition;
     private Entity followTarget;
 
-    private bool hasUsedWp;
     private List<TaskNode> tasks = new List<TaskNode>();
 
     private int numRows, numCols;
@@ -34,7 +33,6 @@ public class AutoPilot
         followTarget = null;
         lastTargetPosition = Vector3.Zero;
         lastPlayerPosition = Vector3.Zero;
-        hasUsedWp = false;
     }
 
     private PartyElementWindow GetLeaderPartyElement()
@@ -509,24 +507,27 @@ public class AutoPilot
             var taskCount = 0;
             var dist = 0f;
             var cachedTasks = tasks;
+
+            var lineWidth = (float)AreWeThereYet.Instance.Settings.TaskLineWidth.Value;
+            var lineColor = AreWeThereYet.Instance.Settings.TaskColor.Value;
             if (cachedTasks?.Count > 0)
             {
                 AreWeThereYet.Instance.Graphics.DrawText(
                     "Current Task: " + cachedTasks[0].Type,
-                    new Vector2(500, 160));
+                    new Vector2(500, 180));
                 foreach (var task in cachedTasks.TakeWhile(task => task?.WorldPosition != null))
                 {
                     if (taskCount == 0)
                     {
                         AreWeThereYet.Instance.Graphics.DrawLine(
                             Helper.WorldToValidScreenPosition(AreWeThereYet.Instance.playerPosition),
-                            Helper.WorldToValidScreenPosition(task.WorldPosition), 2f, Color.Pink);
+                            Helper.WorldToValidScreenPosition(task.WorldPosition), lineWidth, lineColor);
                         dist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, task.WorldPosition);
                     }
                     else
                     {
                         AreWeThereYet.Instance.Graphics.DrawLine(Helper.WorldToValidScreenPosition(task.WorldPosition),
-                            Helper.WorldToValidScreenPosition(cachedTasks[taskCount - 1].WorldPosition), 2f, Color.Pink);
+                            Helper.WorldToValidScreenPosition(cachedTasks[taskCount - 1].WorldPosition), lineWidth, lineColor);
                     }
 
                     taskCount++;
@@ -549,7 +550,7 @@ public class AutoPilot
 
         AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
         AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
-        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(350, 160));
-        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 120), new System.Numerics.Vector2(490,180), 1, Color.White);
+        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ "+ AreWeThereYet.Instance.Settings.autoPilotLeader.Value + " ] " +(followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
+        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490,210), 1, Color.White);
     }
 }

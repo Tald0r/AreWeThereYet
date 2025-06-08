@@ -62,11 +62,6 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         autoPilot.AreaChange();
     }
 
-    public override void DrawSettings()
-    {
-        if (Settings.Enable)
-            ImGuiDrawSettings.DrawImGuiSettings();
-    }
 
     public override void Render()
     {
