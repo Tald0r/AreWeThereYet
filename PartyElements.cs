@@ -1,37 +1,90 @@
-// Core/PartyElements.cs
+// PartyElement.cs
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using ExileCore.PoEMemory.Elements;
+using ExileCore.PoEMemory;
+using ExileCore.PoEMemory.MemoryObjects;
 
-namespace AreWeThereYet
+namespace AreWeThereYet;
+
+public static class PartyElements
 {
-    public class PartyElementWindow
+    public static List<string> ListOfPlayersInParty(int child)
     {
-        public string PlayerName { get; set; }
-        public string ZoneName { get; set; }
-        public Element TpButton { get; set; }
+        var playersInParty = new List<string>();
+
+        try
+        {
+            var baseWindow = AreWeThereYet.Instance.GameController.IngameState.IngameUi.Children[child];
+            if (baseWindow != null)
+            {
+                var partyList = baseWindow.Children[0]?.Children[0]?.Children;
+                playersInParty.AddRange(from player in partyList where player != null && player.ChildCount >= 3 select player.Children[0].Text);
+            }
+
+        }
+        catch (Exception)
+        {
+            // ignored
+        }
+
+        return playersInParty;
     }
 
-    public static class PartyElements
+    public static List<PartyElementWindow> GetPlayerInfoElementList()
     {
-        public static IEnumerable<PartyElementWindow> GetPlayerInfoElementList()
-        {
-            var panel = AreWeThereYet.Instance.GameController?.IngameState?.IngameUi?.PartyPanel;
-            if (panel == null) yield break;
+        var playersInParty = new List<PartyElementWindow>();
 
-            foreach (var child in panel.Children)
+        try
+        {
+            var baseWindow = AreWeThereYet.Instance.GameController?.IngameState?.IngameUi?.PartyElement;
+            var partElementList = baseWindow?.Children?[0]?.Children?[0]?.Children;
+            if (partElementList != null)
             {
-                var nameElem = child.Children.FirstOrDefault(x => !string.IsNullOrEmpty(x.Text));
-                var zoneElem = child.Children.Skip(1).FirstOrDefault(x => !string.IsNullOrEmpty(x.Text));
-                var tpBtn = child.Children.FirstOrDefault(x => x.Path.Contains("TeleportButton"));
-                if (nameElem != null)
-                    yield return new PartyElementWindow
+                foreach (var partyElement in partElementList)
+                {
+                    var playerName = partyElement?.Children?[0]?.Text;
+                    if (partyElement?.Children != null)
                     {
-                        PlayerName = nameElem.Text,
-                        ZoneName = zoneElem?.Text,
-                        TpButton = tpBtn
-                    };
+                        var newElement = new PartyElementWindow
+                        {
+                            PlayerName = playerName,
+                            //get party element
+                            Element = partyElement,
+                            //party element swirly tp thingo, if in another area it becomes child 4 as child 3 becomes the area string
+                            TpButton = partyElement.Children[partyElement.ChildCount == 4 ? 3 : 2],
+                            ZoneName = (partyElement.ChildCount == 4) ? partyElement.Children[2].Text : AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName
+                        };
+
+                        playersInParty.Add(newElement);
+                    }
+                }
             }
         }
+        catch (Exception e)
+        {
+            AreWeThereYet.Instance.LogError("Character: " + e, 5);
+        }
+
+        return playersInParty;
     }
+}
+
+public class PartyElementWindow
+{
+    public string PlayerName { get; set; } = string.Empty;
+    public PlayerData Data { get; set; } = new PlayerData();
+    public Element Element { get; set; } = new Element();
+    public string ZoneName { get; set; } = string.Empty;
+    public Element TpButton { get; set; } = new Element();
+
+    public override string ToString()
+    {
+        return $"PlayerName: {PlayerName}, Data.PlayerEntity.Distance: {Data.PlayerEntity.Distance(Entity.Player).ToString() ?? "Null"}";
+    }
+}
+
+public class PlayerData
+{
+    public Entity PlayerEntity { get; set; } = null;
 }

@@ -1,4 +1,3 @@
-// Core/AutoPilot.cs
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -7,268 +6,550 @@ using ExileCore;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.Elements;
+using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
+using ExileCore.Shared.Enums;
 using SharpDX;
 
-namespace AreWeThereYet
+namespace AreWeThereYet;
+
+public class AutoPilot
 {
-    public class AutoPilot
+    private Coroutine autoPilotCoroutine;
+    private readonly Random random = new Random();
+        
+    private Vector3 lastTargetPosition;
+    private Vector3 lastPlayerPosition;
+    private Entity followTarget;
+
+    private bool hasUsedWp;
+    private List<TaskNode> tasks = new List<TaskNode>();
+
+    private int numRows, numCols;
+    private byte[,] tiles;
+
+    private void ResetPathing()
     {
-        private Coroutine coroutine;
-        private readonly Random rnd = new Random();
-        private Vector3 lastTarget, lastPlayer;
-        private Entity followTarget;
-        private bool usedWp;
-        private List<TaskNode> tasks = new List<TaskNode>();
-        private byte[,] tiles;
-        private int rows, cols;
+        tasks = new List<TaskNode>();
+        followTarget = null;
+        lastTargetPosition = Vector3.Zero;
+        lastPlayerPosition = Vector3.Zero;
+        hasUsedWp = false;
+    }
 
-
-
-
-
-        private PartyElementWindow GetLeaderParty()
+    private PartyElementWindow GetLeaderPartyElement()
+    {
+        try
         {
-            return PartyElements.GetPlayerInfoElementList()
-                .FirstOrDefault(p => string.Equals(p.PlayerName, AreWeThereYet.Instance.Settings.LeaderName.Value, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private LabelOnGround GetBestPortal(PartyElementWindow leader)
-        {
-            var zone = AreWeThereYet.Instance.GameController.Area.CurrentArea.DisplayName;
-            if (leader.ZoneName != zone && !AreWeThereYet.Instance.GameController.Area.CurrentArea.IsHideout)
-                return null;
-            var labels = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                .Where(x => x.IsVisible && x.ItemOnGround.Metadata.ToLower().Contains("portal"))
-                .OrderBy(x => Vector3.Distance(lastTarget, x.ItemOnGround.Pos))
-                .ToList();
-            return labels.FirstOrDefault();
-        }
-
-        private ExileCore.PoEMemory.Elements.Element GetTeleportConfirmation()
-        {
-            try
+            foreach (var partyElementWindow in PartyElements.GetPlayerInfoElementList())
             {
-                var popUp = AreWeThereYet.Instance.GameController.IngameState.IngameUi.PopUpWindow;
-                // The “Are you sure?” text sits at Children[0].Children[0].Children[0]
-                var msg = popUp?.Children[0]?.Children[0]?.Children[0]?.Text;
-                if (msg != null && msg.Contains("Are you sure you want to teleport"))
-                    // The “Yes” button is at Children[0].Children[0].Children[3].Children[0]
-                    return popUp.Children[0].Children[0].Children[3].Children[0];
+                if (string.Equals(partyElementWindow?.PlayerName?.ToLower(), AreWeThereYet.Instance.Settings.autoPilotLeader.Value.ToLower(), StringComparison.CurrentCultureIgnoreCase))
+                {
+                    return partyElementWindow;
+                }
             }
-            catch { /* swallow NREs if UI isn’t fully constructed */ }
             return null;
         }
-
-        public void AreaChange()
+        catch
         {
-            tasks.Clear();
-            followTarget = null;
-            lastTarget = lastPlayer = Vector3.Zero;
-            usedWp = false;
+            return null;
+        }
+    }
 
-            var tc = AreWeThereYet.Instance.GameController.IngameState.Data.Terrain;
-            var melee = AreWeThereYet.Instance.GameController.Memory.ReadBytes(tc.LayerMelee.First, tc.LayerMelee.Size);
-            cols = (int)(tc.NumCols - 1) * 23; rows = (int)(tc.NumRows - 1) * 23;
-            if ((cols & 1) > 0) cols++;
-            tiles = new byte[cols, rows];
-            var idx = 0;
-            for (var y = 0; y < rows; y++)
+    private LabelOnGround GetBestPortalLabel(PartyElementWindow leaderPartyElement)
+    {
+        try
+        {
+            var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
+            if(leaderPartyElement.ZoneName.Equals(currentZoneName) || (!leaderPartyElement.ZoneName.Equals(currentZoneName) && (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout) || AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel >= 68)
             {
-                for (var x = 0; x < cols; x += 2)
-                {
-                    var b = melee[idx + (x >> 1)];
-                    tiles[x, y]   = (byte)((b & 0xf) > 0 ? 1 : 255);
-                    tiles[x+1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
-                }
-                idx += tc.BytesPerRow;
+                var portalLabels =
+                    AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
+                            x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible && x.ItemOnGround != null && 
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || x.ItemOnGround.Metadata.ToLower().Contains("portal") ))
+                        .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos)).ToList();
+
+                return AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout != null && (bool)AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.IsHideout
+                    ? portalLabels?[random.Next(portalLabels.Count)]
+                    : portalLabels?.FirstOrDefault();
             }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private Vector2 GetTpButton(PartyElementWindow leaderPartyElement)
+    {
+        try
+        {
+            var windowOffset = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle().TopLeft;
+            var elemCenter = (Vector2) leaderPartyElement?.TpButton?.GetClientRectCache.Center;
+            var finalPos = new Vector2(elemCenter.X + windowOffset.X, elemCenter.Y + windowOffset.Y);
+				
+            return finalPos;
+        }
+        catch
+        {
+            return Vector2.Zero;
+        }
+    }
+
+    private Element GetTpConfirmation()
+    {
+        try
+        {
+            var ui = AreWeThereYet.Instance.GameController?.IngameState?.IngameUi?.PopUpWindow;
+
+            if (ui.Children[0].Children[0].Children[0].Text.Equals("Are you sure you want to teleport to this player's location?"))
+                return ui.Children[0].Children[0].Children[3].Children[0];
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void AreaChange()
+    {
+        ResetPathing();
             
-            terrainBytes = CoPilot.Instance.GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-            numCols = (int)(terrain.NumCols - 1) * 23;
-            numRows = (int)(terrain.NumRows - 1) * 23;
-            if ((numCols & 1) > 0)
-                numCols++;
-            dataIndex = 0;
-            for (var y = 0; y < numRows; y++)
-            {
-                for (var x = 0; x < numCols; x += 2)
-                {
-                    var b = terrainBytes[dataIndex + (x >> 1)];
+        var terrain = AreWeThereYet.Instance.GameController.IngameState.Data.Terrain;
+        var terrainBytes = AreWeThereYet.Instance.GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+        numCols = (int)(terrain.NumCols - 1) * 23;
+        numRows = (int)(terrain.NumRows - 1) * 23;
+        if ((numCols & 1) > 0)
+            numCols++;
 
-                    var current = tiles[x, y];
-                    if(current == 255)
-                        tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
-                    current = tiles[x+1, y];
-                    if (current == 255)
-                        tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
-                }
-                dataIndex += terrain.BytesPerRow;
+        tiles = new byte[numCols, numRows];
+        var dataIndex = 0;
+        for (var y = 0; y < numRows; y++)
+        {
+            for (var x = 0; x < numCols; x += 2)
+            {
+                var b = terrainBytes[dataIndex + (x >> 1)];
+                tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
+                tiles[x+1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
             }
-        }
-        public void StartCoroutine()
-        {
-            coroutine = new Coroutine(RunLogic(), AreWeThereYet.Instance, "AreWeThereYet");
-            Core.ParallelRunner.Run(coroutine);
+            dataIndex += terrain.BytesPerRow;
         }
 
-        private Entity GetFollowEntity()
+        terrainBytes = AreWeThereYet.Instance.GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+        numCols = (int)(terrain.NumCols - 1) * 23;
+        numRows = (int)(terrain.NumRows - 1) * 23;
+        if ((numCols & 1) > 0)
+            numCols++;
+        dataIndex = 0;
+        for (var y = 0; y < numRows; y++)
         {
-            var name = AreWeThereYet.Instance.Settings.LeaderName.Value.ToLower();
-            return AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.Player]
-                .FirstOrDefault(e => e.GetComponent<Player>()?.PlayerName.ToLower() == name);
-        }
-
-        private IEnumerator RunLogic()
-        {
-            while (true)
+            for (var x = 0; x < numCols; x += 2)
             {
-                var s = AreWeThereYet.Instance.Settings;
-                var ctl = AreWeThereYet.Instance.GameController;
-                if (!s.AutoPilotEnabled.Value || ctl.IsLoading || !ctl.InGame || ctl.MenuWindow.IsOpened || ctl.LocalPlayer?.IsAlive != true)
+                var b = terrainBytes[dataIndex + (x >> 1)];
+
+                var current = tiles[x, y];
+                if(current == 255)
+                    tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
+                current = tiles[x+1, y];
+                if (current == 255)
+                    tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
+            }
+            dataIndex += terrain.BytesPerRow;
+        }
+    }
+
+    public void StartCoroutine()
+    {
+        autoPilotCoroutine = new Coroutine(AutoPilotLogic(), AreWeThereYet.Instance, "AutoPilot");
+        Core.ParallelRunner.Run(autoPilotCoroutine);
+    }
+
+    private IEnumerator MouseoverItem(Entity item)
+    {
+        var uiLoot = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(I => I.IsVisible && I.ItemOnGround.Id == item.Id);
+        if (uiLoot == null) yield return null;
+        var clickPos = uiLoot?.Label?.GetClientRect().Center;
+        if (clickPos != null)
+        {
+            Mouse.SetCursorPos(new Vector2(
+                clickPos.Value.X + random.Next(-15, 15),
+                clickPos.Value.Y + random.Next(-10, 10)));
+        }
+	        
+        yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.autoPilotInputFrequency));
+    }
+
+    private IEnumerator AutoPilotLogic()
+    {
+        while (true)
+        {
+            if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.autoPilotEnabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive || 
+                !AreWeThereYet.Instance.GameController.IsForeGroundCache || MenuWindow.IsOpened || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
+            {
+                yield return new WaitTime(100);
+                continue;
+            }
+		        
+            followTarget = GetFollowingTarget();
+            var leaderPartyElement = GetLeaderPartyElement();
+
+            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName)) {
+                var portal = GetBestPortalLabel(leaderPartyElement);
+                if (portal != null) {
+                    tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance.Value, TaskNodeType.Transition));
+                } else {
+                    var tpConfirmation = GetTpConfirmation();
+                    if (tpConfirmation != null)
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect()
+                            .Center);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
+                        yield return new WaitTime(1000);
+                    }
+						
+                    var tpButton = GetTpButton(leaderPartyElement);
+                    if(!tpButton.Equals(Vector2.Zero))
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpButton, false);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
+                        yield return new WaitTime(200);
+                    }
+                }
+            } else if (followTarget != null) {
+                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                if (distanceToLeader >= AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value)
                 {
-                    yield return new WaitTime(100);
+                    var distanceMoved = Vector3.Distance(lastTargetPosition, followTarget.Pos);
+                    if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value)
+                    {
+                        var transition = GetBestPortalLabel(leaderPartyElement);
+                        if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
+                            tasks.Add(new TaskNode(transition,200, TaskNodeType.Transition));
+                    }
+                    else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
+                    {
+                        tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance));
+                    }
+							
+                    else if (tasks.Count > 0)
+                    {
+                        var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
+                        if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance)
+                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance));
+                    }
+                }
+                else
+                {
+                    if (tasks.Count > 0)
+                    {
+                        for (var i = tasks.Count - 1; i >= 0; i--)
+                            if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
+                                tasks.RemoveAt(i);
+                        yield return null;
+                    }
+                    if (AreWeThereYet.Instance.Settings.autoPilotCloseFollow.Value)
+                    {
+                        if (distanceToLeader >= AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance.Value)
+                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance));
+                    }
+
+                    var questLoot = GetQuestItem();
+                    if (questLoot != null &&
+                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value &&
+                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                        tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.Loot));
+
+                    else if (!hasUsedWp && AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints)
+                    {
+                        var waypoint = AreWeThereYet.Instance.GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type ==EntityType.Waypoint &&
+                                                                                                                       Vector3.Distance(AreWeThereYet.Instance.playerPosition, I.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance);
+
+                        if (waypoint != null)
+                        {
+                            hasUsedWp = true;
+                            tasks.Add(new TaskNode(waypoint.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.ClaimWaypoint));
+                        }
+
+                    }
+                }
+                if (followTarget?.Pos != null)
+                    lastTargetPosition = followTarget.Pos;
+            }
+
+            if (tasks?.Count > 0)
+            {
+                var currentTask = tasks.First();
+                var taskDistance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition);
+                var playerDistanceMoved = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastPlayerPosition);
+
+                if (currentTask.Type == TaskNodeType.Transition && 
+                    playerDistanceMoved >= AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value)
+                {
+                    tasks.RemoveAt(0);
+                    lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
+                    yield return null;
                     continue;
                 }
-
-                followTarget = GetFollowEntity();
-                var partyElem = GetLeaderParty();
-
-                if (followTarget == null && partyElem != null && partyElem.ZoneName != ctl.Area.CurrentArea.DisplayName)
+                switch (currentTask.Type)
                 {
-                    var portal = GetBestPortal(partyElem);
-                    if (portal != null)
-                        tasks.Add(new TaskNode(portal, s.ClearDistance.Value, TaskNodeType.Transition));
-                    else
-                    {
-                        // Teleport UI click
-                        var tpBtn = partyElem.TpButton;
-                        if (tpBtn != null)
-                        {
-                            var pos = tpBtn.GetClientRectCache().Center + ctl.Window.GetWindowRectangle().TopLeft;
-                            yield return Mouse.SetCursorPosHuman(pos);
-                            yield return new WaitTime(200);
-                            yield return Mouse.LeftClick();
-                            yield return new WaitTime(500);
-                        }
-                    }
-                }
-                else if (followTarget != null)
-                {
-                    var dist = Vector3.Distance(ctl.LocalPlayer.Pos, followTarget.Pos);
-                    if (dist > s.ClearDistance.Value)
-                    {
-                        if (!tasks.Any())
-                            tasks.Add(new TaskNode(followTarget.Pos, s.NodeDistance.Value));
-                        else
-                        {
-                            var last = tasks.Last();
-                            if (Vector3.Distance(last.WorldPosition, followTarget.Pos) >= s.NodeDistance.Value)
-                                tasks.Add(new TaskNode(followTarget.Pos, s.NodeDistance.Value));
-                        }
-                    }
-                    else
-                    {
-                        // Close-follow logic
-                        if (s.CloseFollow.Value && dist > s.NodeDistance.Value && !tasks.Any())
-                            tasks.Add(new TaskNode(followTarget.Pos, s.NodeDistance.Value));
+                    case TaskNodeType.Movement:
+                        if (AreWeThereYet.Instance.Settings.autoPilotDashEnabled && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
+                            yield return null;
+                        yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
+                        yield return new WaitTime(random.Next(25) + 30);
+                        Input.KeyDown(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                        yield return new WaitTime(random.Next(25) + 30);
+                        Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
 
-                        // Loot
-                        var loot = ctl.EntityListWrapper.Entities
-                            .FirstOrDefault(e => e.Type == EntityType.WorldItem && e.HasComponent<WorldItem>() &&
-                                                 ctl.Files.BaseItemTypes.Translate(e.GetComponent<WorldItem>().ItemEntity.Path).ClassName == "QuestItem");
-                        if (loot != null && Vector3.Distance(ctl.LocalPlayer.Pos, loot.Pos) < s.ClearDistance.Value)
-                            tasks.Add(new TaskNode(loot.Pos, s.ClearDistance.Value, TaskNodeType.Loot));
-
-                        // Waypoint
-                        if (!usedWp && s.TakeWaypoints.Value)
-                        {
-                            var wp = ctl.EntityListWrapper.Entities.FirstOrDefault(e => e.Type == EntityType.Waypoint &&
-                                       Vector3.Distance(ctl.LocalPlayer.Pos, e.Pos) < s.ClearDistance.Value);
-                            if (wp != null)
-                            {
-                                usedWp = true;
-                                tasks.Add(new TaskNode(wp.Pos, s.ClearDistance.Value, TaskNodeType.ClaimWaypoint));
-                            }
-                        }
-                    }
-                    lastTarget = followTarget.Pos;
-                }
-
-                // Execute tasks
-                if (tasks.Count > 0)
-                {
-                    var task = tasks[0];
-                    var pdist = Vector3.Distance(AreWeThereYet.Instance.GameController.LocalPlayer.Pos, task.WorldPosition);
-                    switch (task.Type)
-                    {
-                        case TaskNodeType.Movement:
-                            yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(task.WorldPosition));
-                            yield return new WaitTime(rnd.Next(25) + 30);
-                            Input.KeyDown(AreWeThereYet.Instance.Settings.MoveKey.Value);
-                            yield return new WaitTime(rnd.Next(25) + 30);
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.MoveKey.Value);
-                            if (pdist <= s.NodeDistance.Value * 1.5f)
-                                tasks.RemoveAt(0);
-                            break;
-                        case TaskNodeType.Loot:
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.MoveKey.Value);
-                            yield return new WaitTime(s.InputFrequency.Value);
-                            // simple click
-                            yield return Mouse.LeftClick();
+                        if (taskDistance <= AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance.Value * 1.5)
                             tasks.RemoveAt(0);
-                            break;
-                        case TaskNodeType.Transition:
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.MoveKey.Value);
-                            yield return new WaitTime(60);
-                            var label = task.LabelOnGround.Label.GetClientRect().Center;
-                            yield return Mouse.SetCursorPosAndLeftClickHuman(label, 100);
-                            yield return new WaitTime(300);
-                            task.AttemptCount++;
-                            if (task.AttemptCount > 6) tasks.RemoveAt(0);
-                            break;
-                        case TaskNodeType.ClaimWaypoint:
-                            if (pdist > 150)
+                        yield return null;
+                        yield return null;
+                        continue;
+                    case TaskNodeType.Loot:
+                    {
+                        currentTask.AttemptCount++;
+                        var questLoot = GetQuestItem();
+                        if (questLoot == null
+                            || currentTask.AttemptCount > 2
+                            || Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) >=
+                            AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value)
+                        {
+                            tasks.RemoveAt(0);
+                            yield return null;
+                        }
+
+                        Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                        yield return new WaitTime(AreWeThereYet.Instance.Settings.autoPilotInputFrequency);
+                        if (questLoot != null)
+                        {
+                            var targetInfo = questLoot.GetComponent<Targetable>();
+                            switch (targetInfo.isTargeted)
                             {
-                                var pos = Helper.WorldToValidScreenPosition(task.WorldPosition);
-                                Input.KeyUp(AreWeThereYet.Instance.Settings.MoveKey.Value);
-                                yield return new WaitTime(s.InputFrequency.Value);
-                                yield return Mouse.SetCursorPosAndLeftClickHuman(pos, 100);
-                                yield return new WaitTime(1000);
+                                case false:
+                                    yield return MouseoverItem(questLoot);
+                                    break;
+                                case true:
+                                    yield return Mouse.LeftClick();
+                                    yield return new WaitTime(1000);
+                                    break;
                             }
-                            task.AttemptCount++;
-                            if (task.AttemptCount > 3) tasks.RemoveAt(0);
-                            break;
+                        }
+
+                        break;
+                    }
+                    case TaskNodeType.Transition:
+                    {
+                        Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                        yield return new WaitTime(60);
+                        yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
+                        yield return new WaitTime(300);
+
+                        currentTask.AttemptCount++;
+                        if (currentTask.AttemptCount > 6)
+                            tasks.RemoveAt(0);
+                        {
+                            yield return null;
+                            continue;
+                        }
+                    }
+
+                    case TaskNodeType.ClaimWaypoint:
+                    {
+                        if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition) > 150)
+                        {
+                            var screenPos = Helper.WorldToValidScreenPosition(currentTask.WorldPosition);
+                            Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                            yield return new WaitTime(AreWeThereYet.Instance.Settings.autoPilotInputFrequency);
+                            yield return Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
+                            yield return new WaitTime(1000);
+                        }
+                        currentTask.AttemptCount++;
+                        if (currentTask.AttemptCount > 3)
+                            tasks.RemoveAt(0);
+                        {
+                            yield return null;
+                            continue;
+                        }
                     }
                 }
-
-                lastPlayer = AreWeThereYet.Instance.GameController.LocalPlayer.Pos;
-                yield return new WaitTime(50);
             }
+            lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
+            yield return new WaitTime(50);
         }
+    }
+        
+    private bool CheckDashTerrain(Vector2 targetPosition)
+    {
+        if (tiles == null)
+            return false;
 
-        public void Render()
+        var dir = targetPosition - AreWeThereYet.Instance.GameController.Player.GridPos;
+        dir.Normalize();
+
+        var distanceBeforeWall = 0;
+        var distanceInWall = 0;
+
+        var shouldDash = false;
+        var points = new List<System.Drawing.Point>();
+        for (var i = 0; i < 500; i++)
         {
-            var s = AreWeThereYet.Instance.Settings;
-            if (s.ToggleKey.PressedOnce())
-            {
-                s.AutoPilotEnabled.Value = !s.AutoPilotEnabled.Value;
-                tasks.Clear();
-            }
+            var v2Point = AreWeThereYet.Instance.GameController.Player.GridPos + i * dir;
+            var point = new System.Drawing.Point((int)(AreWeThereYet.Instance.GameController.Player.GridPos.X + i * dir.X),
+                (int)(AreWeThereYet.Instance.GameController.Player.GridPos.Y + i * dir.Y));
 
-            if (!s.AutoPilotEnabled.Value || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
-                return;
+            if (points.Contains(point))
+                continue;
+            if (Vector2.Distance(v2Point,targetPosition) < 2)
+                break;
 
-            // draw lines
-            foreach (var t in tasks.Take(1))
+            points.Add(point);
+            var tile = tiles[point.X, point.Y];
+
+            if (tile == 255)
             {
-                AreWeThereYet.Instance.Graphics.DrawLine(
-                    Helper.WorldToValidScreenPosition(AreWeThereYet.Instance.GameController.LocalPlayer.Pos),
-                    Helper.WorldToValidScreenPosition(t.WorldPosition), 2f, Color.Pink);
+                shouldDash = false;
+                break;
             }
-            AreWeThereYet.Instance.Graphics.DrawText(
-                $"AreWeThereYet: {(coroutine.Running ? "Running" : "Stopped")}",
-                new SharpDX.Vector2(400, 100));
+            else if (tile == 2)
+            {
+                if (shouldDash)
+                    distanceInWall++;
+                shouldDash = true;
+            }
+            else if (!shouldDash)
+            {
+                distanceBeforeWall++;
+                if (distanceBeforeWall > 10)					
+                    break;					
+            }
         }
+
+        if (distanceBeforeWall > 10 || distanceInWall < 5)
+            shouldDash = false;
+
+        if (shouldDash)
+        {
+            Mouse.SetCursorPos(Helper.WorldToValidScreenPosition(targetPosition.GridToWorld(followTarget == null ? AreWeThereYet.Instance.GameController.Player.Pos.Z : followTarget.Pos.Z)));
+            Keyboard.KeyPress(AreWeThereYet.Instance.Settings.autoPilotDashKey);
+            return true;
+        }
+
+        return false;
+    }
+
+    private Entity GetFollowingTarget()
+    {
+        try
+        {
+            string leaderName = AreWeThereYet.Instance.Settings.autoPilotLeader.Value.ToLower();
+            return AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.Player].FirstOrDefault(x => string.Equals(x.GetComponent<Player>()?.PlayerName.ToLower(), leaderName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Entity GetQuestItem()
+    {
+        try
+        {
+            return AreWeThereYet.Instance.GameController.EntityListWrapper.Entities
+                .Where(e => e?.Type == EntityType.WorldItem && e.IsTargetable && e.HasComponent<WorldItem>())
+                .FirstOrDefault(e =>
+                {
+                    var itemEntity = e.GetComponent<WorldItem>().ItemEntity;
+                    return AreWeThereYet.Instance.GameController.Files.BaseItemTypes.Translate(itemEntity.Path).ClassName ==
+                           "QuestItem";
+                });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+		
+    public void Render()
+    {
+        if (AreWeThereYet.Instance.Settings.autoPilotToggleKey.PressedOnce())
+        {
+            AreWeThereYet.Instance.Settings.autoPilotEnabled.SetValueNoEvent(!AreWeThereYet.Instance.Settings.autoPilotEnabled.Value);
+            tasks = new List<TaskNode>();				
+        }
+			
+        if (!AreWeThereYet.Instance.Settings.autoPilotEnabled || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
+            return;
+
+        try
+        {
+            var portalLabels =
+                AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
+                    x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible &&
+                    x.ItemOnGround != null &&
+                    (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
+                     x.ItemOnGround.Metadata.ToLower().Contains("portal"))).ToList();
+
+            foreach (var portal in portalLabels)
+            {
+                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f,Color.Firebrick);
+            }
+        }
+        catch (Exception)
+        {
+        }
+			
+        try
+        {
+            var taskCount = 0;
+            var dist = 0f;
+            var cachedTasks = tasks;
+            if (cachedTasks?.Count > 0)
+            {
+                AreWeThereYet.Instance.Graphics.DrawText(
+                    "Current Task: " + cachedTasks[0].Type,
+                    new Vector2(500, 160));
+                foreach (var task in cachedTasks.TakeWhile(task => task?.WorldPosition != null))
+                {
+                    if (taskCount == 0)
+                    {
+                        AreWeThereYet.Instance.Graphics.DrawLine(
+                            Helper.WorldToValidScreenPosition(AreWeThereYet.Instance.playerPosition),
+                            Helper.WorldToValidScreenPosition(task.WorldPosition), 2f, Color.Pink);
+                        dist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, task.WorldPosition);
+                    }
+                    else
+                    {
+                        AreWeThereYet.Instance.Graphics.DrawLine(Helper.WorldToValidScreenPosition(task.WorldPosition),
+                            Helper.WorldToValidScreenPosition(cachedTasks[taskCount - 1].WorldPosition), 2f, Color.Pink);
+                    }
+
+                    taskCount++;
+                }
+            }
+            if (AreWeThereYet.Instance.localPlayer != null)
+            {
+                var targetDist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastTargetPosition);
+                AreWeThereYet.Instance.Graphics.DrawText(
+                    $"Follow Enabled: {AreWeThereYet.Instance.Settings.autoPilotEnabled.Value}", new System.Numerics.Vector2(500, 120));
+                AreWeThereYet.Instance.Graphics.DrawText(
+                    $"Task Count: {taskCount:D} Next WP Distance: {dist:F} Target Distance: {targetDist:F}",
+                    new System.Numerics.Vector2(500, 140));
+					
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
+        AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
+        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(350, 160));
+        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 120), new System.Numerics.Vector2(490,180), 1, Color.White);
     }
 }

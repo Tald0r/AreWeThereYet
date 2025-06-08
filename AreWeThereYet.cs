@@ -1,58 +1,114 @@
-﻿// AreWeThereYet.cs
-using System;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
 using ExileCore;
-using ExileCore.PoEMemory;
+using ExileCore.PoEMemory.Components;
+using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
+using ExileCore.Shared.Enums;
 using SharpDX;
 
-namespace AreWeThereYet
+namespace AreWeThereYet;
+
+public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
 {
-    public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
+    internal static AreWeThereYet Instance;
+    internal AutoPilot autoPilot = new AutoPilot();
+
+    private List<Buff> buffs;
+    internal DateTime lastTimeAny;
+    internal Entity localPlayer;
+    internal Life player;
+    internal Vector3 playerPosition;
+    private Coroutine skillCoroutine;
+
+    public override bool Initialise()
     {
-        internal static AreWeThereYet Instance;
-        private AutoPilot autoPilot;
+        if (Instance == null)
+            Instance = this;
+        GameController.LeftPanel.WantUse(() => Settings.Enable);
+        skillCoroutine = new Coroutine(WaitForAreaChange(), this);
+        Core.ParallelRunner.Run(skillCoroutine);
+        Input.RegisterKey(Settings.autoPilotToggleKey.Value);
+        Settings.autoPilotToggleKey.OnValueChanged += () => { Input.RegisterKey(Settings.autoPilotToggleKey.Value); };
+        autoPilot.StartCoroutine();
+        return true;
+    }
 
-        public override bool Initialise()
+    internal Vector2 GetMousePosition()
+    {
+        return new Vector2(GameController.IngameState.MousePosX, GameController.IngameState.MousePosY);
+    }
+
+    private IEnumerator WaitForAreaChange()
+    {
+        while (localPlayer == null || GameController.IsLoading || !GameController.InGame)
+            yield return new WaitTime(200);
+
+        yield return new WaitTime(1000);
+    }
+
+    public override void AreaChange(AreaInstance area)
+    {
+        base.AreaChange(area);
+        
+        var coroutine = new Coroutine(WaitForAreaChange(), this);
+        Core.ParallelRunner.Run(coroutine);
+
+        autoPilot.AreaChange();
+    }
+
+    public override void DrawSettings()
+    {
+        if (Settings.Enable)
+            ImGuiDrawSettings.DrawImGuiSettings();
+    }
+
+    public override void Render()
+    {
+        try
         {
-            if (Instance == null) Instance = this;
-            GameController.LeftPanel.WantUse(() => Settings.Enable.Value);
+            if (!Settings.Enable) return;
 
-            Input.RegisterKey(Settings.ToggleKey.Value);
-            Input.RegisterKey(Settings.MoveKey.Value);
-            Input.RegisterKey(Settings.DashKey.Value);
-            
-            Settings.ToggleKey.OnValueChanged += () => Input.RegisterKey(Settings.ToggleKey.Value);
-            Settings.MoveKey.  OnValueChanged += () => Input.RegisterKey(Settings.MoveKey.Value);
-            Settings.DashKey.  OnValueChanged += () => Input.RegisterKey(Settings.DashKey.Value);
-            
-            autoPilot = new AutoPilot();
-            autoPilot.StartCoroutine();
-            return true;
-        }
-
-        public override void AreaChange(AreaInstance area)
-        {
-            base.AreaChange(area);
-            autoPilot.AreaChange();
-        }
-
-        public override void DrawSettings()
-        {
-            if (Settings.Enable.Value)
-                ImGuiDrawSettings.DrawImGuiSettings();
-        }
-
-        public override void Render()
-        {
             try
             {
-                if (!Settings.Enable.Value) return;
+                if (Settings.autoPilotEnabled && Settings.autoPilotGrace && buffs != null && buffs.Exists(x => x.Name == "grace_period"))
+                {
+                    Keyboard.KeyPress(Settings.autoPilotMoveKey);
+                }
                 autoPilot.Render();
             }
             catch (Exception e)
             {
                 LogError(e.ToString());
             }
+
+            if (GameController?.Game?.IngameState?.Data?.LocalPlayer == null || GameController?.IngameState?.IngameUi == null)
+                return;
+            var chatField = GameController?.IngameState?.IngameUi?.ChatPanel?.ChatInputElement?.IsVisible;
+            if (chatField != null && (bool)chatField)
+                return;
+
+            localPlayer = GameController.Game.IngameState.Data.LocalPlayer;
+            player = localPlayer.GetComponent<Life>();
+            buffs = localPlayer.GetComponent<Buffs>().BuffsList;
+            playerPosition = localPlayer.Pos;
+
+            if (GameController.Area.CurrentArea.IsHideout || GameController.Area.CurrentArea.IsTown ||
+                GameController.IngameState.IngameUi.NpcDialog.IsVisible ||
+                GameController.IngameState.IngameUi.SellWindow.IsVisible || MenuWindow.IsOpened ||
+                !GameController.InGame || GameController.IsLoading) return;
+
+            if (buffs.Exists(x => x.Name == "grace_period") ||
+                !GameController.IsForeGroundCache)
+                return;
+
         }
+        catch (Exception e)
+        { LogError(e.ToString()); }
     }
 }

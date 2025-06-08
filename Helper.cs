@@ -1,32 +1,34 @@
-// Core/Helper.cs
+using System;
 using SharpDX;
 using ExileCore.PoEMemory.MemoryObjects;
 
-namespace AreWeThereYet
+namespace AreWeThereYet;
+
+public static class Helper
 {
-    public static class Helper
+    internal static Random random = new Random();
+    private static Camera Camera => AreWeThereYet.Instance.GameController.Game.IngameState.Camera;
+        
+    internal static float MoveTowards(float cur, float tar, float max)
     {
-        private static Camera Cam => AreWeThereYet.Instance.GameController.Game.IngameState.Camera;
+        if (Math.Abs(tar - cur) <= max)
+            return tar;
+        return cur + Math.Sign(tar - cur) * max;
+    }
+    internal static Vector2 WorldToValidScreenPosition(Vector3 worldPos)
+    {
+        var windowRect = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle();
+        var screenPos = Camera.WorldToScreen(worldPos);
+        var result = screenPos + windowRect.Location;
 
-        public static Vector2 WorldToValidScreenPosition(Vector3 worldPos)
+        var edgeBounds = 50;
+        if (!windowRect.Intersects(new RectangleF(result.X, result.Y, edgeBounds, edgeBounds)))
         {
-            var wr = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle();
-            var sp = Cam.WorldToScreen(worldPos);
-            var p = sp + wr.Location;
-            const float buffer = 50;
-            if (!wr.Intersects(new RectangleF(p.X, p.Y, buffer, buffer)))
-            {
-                p.X = MathUtil.Clamp(p.X, wr.Left + buffer, wr.Right - buffer);
-                p.Y = MathUtil.Clamp(p.Y, wr.Top + buffer, wr.Bottom - buffer);
-            }
-            return p;
+            if (result.X < windowRect.TopLeft.X) result.X = windowRect.TopLeft.X + edgeBounds;
+            if (result.Y < windowRect.TopLeft.Y) result.Y = windowRect.TopLeft.Y + edgeBounds;
+            if (result.X > windowRect.BottomRight.X) result.X = windowRect.BottomRight.X - edgeBounds;
+            if (result.Y > windowRect.BottomRight.Y) result.Y = windowRect.BottomRight.Y - edgeBounds;
         }
-
-        public static float MoveTowards(float cur, float tar, float max)
-        {
-            var diff = tar - cur;
-            if (Math.Abs(diff) <= max) return tar;
-            return cur + Math.Sign(diff) * max;
-        }
+        return result;
     }
 }

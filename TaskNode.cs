@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+// TaskNode.cs
 using ExileCore.PoEMemory.Elements;
 using SharpDX;
 
@@ -14,6 +10,10 @@ public class TaskNode
     /// The position of the task in world space.
     /// </summary>
     public Vector3 WorldPosition { get; set; }
+    /// <summary>
+    /// The position of the task in UI space.
+    /// </summary>
+    public Vector2 UiPosition { get; set; }
     /// <summary>
     /// Type of task we are performing. Different tasks have different underlying logic
     /// </summary>
@@ -29,8 +29,6 @@ public class TaskNode
     /// </summary>
     public int AttemptCount { get; set; }
     public LabelOnGround LabelOnGround { get; set; }
-
-
 
     public TaskNode(Vector3 position, int bounds, TaskNodeType type = TaskNodeType.Movement)
     {
