@@ -10,6 +10,7 @@ using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
 using ExileCore.Shared.Enums;
 using SharpDX;
+using AreWeThereYet.Utils;
 
 namespace AreWeThereYet;
 
@@ -24,8 +25,7 @@ public class AutoPilot
 
     private List<TaskNode> tasks = new List<TaskNode>();
 
-    private int numRows, numCols;
-    private byte[,] tiles;
+    private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
     private void ResetPathing()
     {
@@ -116,47 +116,6 @@ public class AutoPilot
     {
         ResetPathing();
             
-        var terrain = AreWeThereYet.Instance.GameController.IngameState.Data.Terrain;
-        var terrainBytes = AreWeThereYet.Instance.GameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
-        numCols = (int)(terrain.NumCols - 1) * 23;
-        numRows = (int)(terrain.NumRows - 1) * 23;
-        if ((numCols & 1) > 0)
-            numCols++;
-
-        tiles = new byte[numCols, numRows];
-        var dataIndex = 0;
-        for (var y = 0; y < numRows; y++)
-        {
-            for (var x = 0; x < numCols; x += 2)
-            {
-                var b = terrainBytes[dataIndex + (x >> 1)];
-                tiles[x, y] = (byte)((b & 0xf) > 0 ? 1 : 255);
-                tiles[x+1, y] = (byte)((b >> 4) > 0 ? 1 : 255);
-            }
-            dataIndex += terrain.BytesPerRow;
-        }
-
-        terrainBytes = AreWeThereYet.Instance.GameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-        numCols = (int)(terrain.NumCols - 1) * 23;
-        numRows = (int)(terrain.NumRows - 1) * 23;
-        if ((numCols & 1) > 0)
-            numCols++;
-        dataIndex = 0;
-        for (var y = 0; y < numRows; y++)
-        {
-            for (var x = 0; x < numCols; x += 2)
-            {
-                var b = terrainBytes[dataIndex + (x >> 1)];
-
-                var current = tiles[x, y];
-                if(current == 255)
-                    tiles[x, y] = (byte)((b & 0xf) > 3 ? 2 : 255);
-                current = tiles[x+1, y];
-                if (current == 255)
-                    tiles[x + 1, y] = (byte)((b >> 4) > 3 ? 2 : 255);
-            }
-            dataIndex += terrain.BytesPerRow;
-        }
     }
 
     public void StartCoroutine()
@@ -261,19 +220,6 @@ public class AutoPilot
                         Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance.Value &&
                         tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
                         tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.Loot));
-
-                    // else if (!hasUsedWp && AreWeThereYet.Instance.Settings.autoPilotTakeWaypoints)
-                    // {
-                    //     var waypoint = AreWeThereYet.Instance.GameController.EntityListWrapper.Entities.SingleOrDefault(I => I.Type ==EntityType.Waypoint &&
-                    //                                                                                                    Vector3.Distance(AreWeThereYet.Instance.playerPosition, I.Pos) < AreWeThereYet.Instance.Settings.autoPilotClearPathDistance);
-
-                    //     if (waypoint != null)
-                    //     {
-                    //         hasUsedWp = true;
-                    //         tasks.Add(new TaskNode(waypoint.Pos, AreWeThereYet.Instance.Settings.autoPilotClearPathDistance, TaskNodeType.ClaimWaypoint));
-                    //     }
-
-                    // }
                 }
                 if (followTarget?.Pos != null)
                     lastTargetPosition = followTarget.Pos;
@@ -296,13 +242,22 @@ public class AutoPilot
                 switch (currentTask.Type)
                 {
                     case TaskNodeType.Movement:
-                        if (AreWeThereYet.Instance.Settings.autoPilotDashEnabled && CheckDashTerrain(currentTask.WorldPosition.WorldToGrid()))
-                            yield return null;
-                        yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
-                        yield return new WaitTime(random.Next(25) + 30);
-                        Input.KeyDown(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
-                        yield return new WaitTime(random.Next(25) + 30);
-                        Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                        if (AreWeThereYet.Instance.Settings.autoPilotDashEnabled &&
+                        ShouldUseDash(currentTask.WorldPosition.WorldToGrid()))
+                        {
+                            yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
+                            yield return new WaitTime(random.Next(25) + 30);
+                            Keyboard.KeyPress(AreWeThereYet.Instance.Settings.autoPilotDashKey);
+                            yield return new WaitTime(random.Next(25) + 30);
+                        }
+                        else
+                        {
+                            yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
+                            yield return new WaitTime(random.Next(25) + 30);
+                            Input.KeyDown(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                            yield return new WaitTime(random.Next(25) + 30);
+                            Input.KeyUp(AreWeThereYet.Instance.Settings.autoPilotMoveKey);
+                        }
 
                         if (taskDistance <= AreWeThereYet.Instance.Settings.autoPilotPathfindingNodeDistance.Value * 1.5)
                             tasks.RemoveAt(0);
@@ -381,64 +336,29 @@ public class AutoPilot
             yield return new WaitTime(50);
         }
     }
-        
-    private bool CheckDashTerrain(Vector2 targetPosition)
+    
+    private bool ShouldUseDash(Vector2 targetPosition)
     {
-        if (tiles == null)
+        if (LineOfSight == null)
             return false;
 
-        var dir = targetPosition - AreWeThereYet.Instance.GameController.Player.GridPos;
-        dir.Normalize();
+        var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
+        var distance = Vector2.Distance(playerPos, targetPosition);
+        
+        // Don't dash for very short or very long distances
+        if (distance < 30 || distance > 150)
+            return false;
+        
+        // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
+        var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
+        var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
 
-        var distanceBeforeWall = 0;
-        var distanceInWall = 0;
-
-        var shouldDash = false;
-        var points = new List<System.Drawing.Point>();
-        for (var i = 0; i < 500; i++)
-        {
-            var v2Point = AreWeThereYet.Instance.GameController.Player.GridPos + i * dir;
-            var point = new System.Drawing.Point((int)(AreWeThereYet.Instance.GameController.Player.GridPos.X + i * dir.X),
-                (int)(AreWeThereYet.Instance.GameController.Player.GridPos.Y + i * dir.Y));
-
-            if (points.Contains(point))
-                continue;
-            if (Vector2.Distance(v2Point,targetPosition) < 2)
-                break;
-
-            points.Add(point);
-            var tile = tiles[point.X, point.Y];
-
-            if (tile == 255)
-            {
-                shouldDash = false;
-                break;
-            }
-            else if (tile == 2)
-            {
-                if (shouldDash)
-                    distanceInWall++;
-                shouldDash = true;
-            }
-            else if (!shouldDash)
-            {
-                distanceBeforeWall++;
-                if (distanceBeforeWall > 10)					
-                    break;					
-            }
-        }
-
-        if (distanceBeforeWall > 10 || distanceInWall < 5)
-            shouldDash = false;
-
-        if (shouldDash)
-        {
-            Mouse.SetCursorPos(Helper.WorldToValidScreenPosition(targetPosition.GridToWorld(followTarget == null ? AreWeThereYet.Instance.GameController.Player.Pos.Z : followTarget.Pos.Z)));
-            Keyboard.KeyPress(AreWeThereYet.Instance.Settings.autoPilotDashKey);
-            return true;
-        }
-
-        return false;
+        // Use line of sight to determine if there's an obstacle to dash through
+        var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
+        
+        // Dash when there's NO line of sight (obstacles in the way)
+        // but the distance is reasonable for dashing
+        return !hasLineOfSight && distance >= 50;
     }
 
     private Entity GetFollowingTarget()

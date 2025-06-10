@@ -59,4 +59,15 @@ public class AreWeThereYetSettings : ISettings
     public ColorNode TaskColor { get; set; } = new ColorNode(Color.Green);
 
     #endregion
+
+    #region Debug Settings
+
+    [Menu("Enable Rendering???")]
+    public ToggleNode EnableRendering { get; set; } = new ToggleNode(true);
+    [Menu("Show Terrain Debug")]
+    public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
+    [Menu("Show Debug Info???")]
+    public ToggleNode ShowDebugInfo { get; set; } = new ToggleNode(false);
+
+    #endregion
 }

@@ -11,6 +11,7 @@ using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
 using ExileCore.Shared.Enums;
 using SharpDX;
+using AreWeThereYet.Utils;
 
 namespace AreWeThereYet;
 
@@ -18,6 +19,7 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
 {
     internal static AreWeThereYet Instance;
     internal AutoPilot autoPilot = new AutoPilot();
+    internal LineOfSight lineOfSight;
 
     private List<Buff> buffs;
     internal DateTime lastTimeAny;
@@ -35,6 +37,9 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         Core.ParallelRunner.Run(skillCoroutine);
         Input.RegisterKey(Settings.autoPilotToggleKey.Value);
         Settings.autoPilotToggleKey.OnValueChanged += () => { Input.RegisterKey(Settings.autoPilotToggleKey.Value); };
+
+        lineOfSight = new LineOfSight(GameController);
+
         autoPilot.StartCoroutine();
         return true;
     }
@@ -58,6 +63,7 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         
         var coroutine = new Coroutine(WaitForAreaChange(), this);
         Core.ParallelRunner.Run(coroutine);
+        EventBus.Instance.Publish(new AreaChangeEvent());
 
         autoPilot.AreaChange();
     }
@@ -76,6 +82,9 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
                     Keyboard.KeyPress(Settings.autoPilotMoveKey);
                 }
                 autoPilot.Render();
+
+                // Publish render event for LineOfSight debug visualization
+                EventBus.Instance.Publish(new RenderEvent(Graphics));
             }
             catch (Exception e)
             {
