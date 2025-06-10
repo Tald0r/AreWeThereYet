@@ -62,12 +62,14 @@ public class AreWeThereYetSettings : ISettings
 
     #region Debug Settings
 
-    [Menu("Enable Rendering???")]
+    [Menu("Enable Rendering")]
     public ToggleNode EnableRendering { get; set; } = new ToggleNode(true);
+
     [Menu("Show Terrain Debug")]
     public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
-    [Menu("Show Debug Info???")]
-    public ToggleNode ShowDebugInfo { get; set; } = new ToggleNode(false);
+    
+    [Menu("Target Layer Value")]
+    public RangeNode<int> TargetLayerValue { get; set; } = new RangeNode<int>(4, 0, 5);
 
     #endregion
 }

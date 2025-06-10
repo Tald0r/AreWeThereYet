@@ -14,7 +14,8 @@ namespace AreWeThereYet.Utils
         private readonly GameController _gameController;
         private int[][] _terrainData;
         private Vector2 _areaDimensions;
-        private const int TARGET_LAYER_VALUE = 4;
+
+        private int TargetLayerValue => AreWeThereYet.Instance.Settings.TargetLayerValue?.Value ?? 4;
 
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
@@ -134,69 +135,52 @@ namespace AreWeThereYet.Utils
 
             var dx = Math.Abs(endX - startX);
             var dy = Math.Abs(endY - startY);
-
-            if (dx == 0)
-                return CheckVerticalLine(startX, startY, endY);
-            if (dy == 0)
-                return CheckHorizontalLine(startY, startX, endX);
-
-            return CheckDiagonalLine(start, end, dx, dy);
-        }
-
-        private bool CheckVerticalLine(int x, int startY, int endY)
-        {
-            var step = Math.Sign(endY - startY);
-            var y = startY;
-
-            while (y != endY)
-            {
-                y += step;
-                var pos = new Vector2(x, y);
-                var terrainValue = GetTerrainValue(pos);
-                _debugVisiblePoints.Add(pos);
-
-                if (terrainValue < TARGET_LAYER_VALUE) continue;
-                if (terrainValue <= TARGET_LAYER_VALUE) return false;
-            }
-
-            return true;
-        }
-
-        private bool CheckHorizontalLine(int y, int startX, int endX)
-        {
-            var step = Math.Sign(endX - startX);
+            
             var x = startX;
+            var y = startY;
+            var stepX = startX < endX ? 1 : -1;
+            var stepY = startY < endY ? 1 : -1;
 
-            while (x != endX)
+            // Handle straight lines 
+            if (dx == 0)
             {
-                x += step;
-                var pos = new Vector2(x, y);
-                var terrainValue = GetTerrainValue(pos);
-                _debugVisiblePoints.Add(pos);
-
-                if (terrainValue < TARGET_LAYER_VALUE) continue;
-                if (terrainValue <= TARGET_LAYER_VALUE) return false;
+                // Vertical line
+                for (var i = 0; i < dy; i++)
+                {
+                    y += stepY;
+                    var pos = new Vector2(x, y);
+                    var terrainValue = GetTerrainValue(pos);
+                    if (terrainValue <= TargetLayerValue) return false;
+                    _debugVisiblePoints.Add(pos);
+                }
+                return true;
             }
 
-            return true;
-        }
+            if (dy == 0)
+            {
+                // Horizontal line
+                for (var i = 0; i < dx; i++)
+                {
+                    x += stepX;
+                    var pos = new Vector2(x, y);
+                    var terrainValue = GetTerrainValue(pos);
+                    if (terrainValue <= TargetLayerValue) return false;
+                    _debugVisiblePoints.Add(pos);
+                }
+                return true;
+            }
 
-        private bool CheckDiagonalLine(Vector2 start, Vector2 end, float dx, float dy)
-        {
-            var x = (int)start.X;
-            var y = (int)start.Y;
-            var stepX = Math.Sign(end.X - start.X);
-            var stepY = Math.Sign(end.Y - start.Y);
+            // DDA algorithm for diagonal lines 
+            var deltaErr = Math.Abs((float)dy / dx);
+            var error = 0.0f;
 
             if (dx >= dy)
             {
-                var deltaError = dy / dx;
-                var error = 0.0f;
-
-                while (x != (int)end.X)
+                // Drive by X
+                for (var i = 0; i < dx; i++)
                 {
                     x += stepX;
-                    error += deltaError;
+                    error += deltaErr;
 
                     if (error >= 0.5f)
                     {
@@ -206,21 +190,18 @@ namespace AreWeThereYet.Utils
 
                     var pos = new Vector2(x, y);
                     var terrainValue = GetTerrainValue(pos);
+                    if (terrainValue <= TargetLayerValue) return false;
                     _debugVisiblePoints.Add(pos);
-
-                    if (terrainValue < TARGET_LAYER_VALUE) continue;
-                    if (terrainValue <= TARGET_LAYER_VALUE) return false;
                 }
             }
             else
             {
-                var deltaError = dx / dy;
-                var error = 0.0f;
-
-                while (y != (int)end.Y)
+                // Drive by Y
+                deltaErr = Math.Abs((float)dx / dy);
+                for (var i = 0; i < dy; i++)
                 {
                     y += stepY;
-                    error += deltaError;
+                    error += deltaErr;
 
                     if (error >= 0.5f)
                     {
@@ -230,15 +211,14 @@ namespace AreWeThereYet.Utils
 
                     var pos = new Vector2(x, y);
                     var terrainValue = GetTerrainValue(pos);
+                    if (terrainValue <= TargetLayerValue) return false;
                     _debugVisiblePoints.Add(pos);
-
-                    if (terrainValue < TARGET_LAYER_VALUE) continue;
-                    if (terrainValue <= TARGET_LAYER_VALUE) return false;
                 }
             }
 
             return true;
         }
+
 
         private bool IsInBounds(int x, int y)
         {
