@@ -67,9 +67,12 @@ public class AreWeThereYetSettings : ISettings
 
     [Menu("Show Terrain Debug")]
     public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
-    
+
+    [Menu("Show Detailed Debug")]
+    public ToggleNode ShowDetailedDebug { get; set; } = new ToggleNode(false);
+
     [Menu("Target Layer Value")]
-    public RangeNode<int> TargetLayerValue { get; set; } = new RangeNode<int>(4, 0, 5);
+    public RangeNode<int> TargetLayerValue { get; set; } = new RangeNode<int>(2, 0, 5);
 
     #endregion
 }

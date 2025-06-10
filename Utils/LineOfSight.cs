@@ -36,10 +36,7 @@ namespace AreWeThereYet.Utils
             if (!AreWeThereYet.Instance.Settings.EnableRendering) return;
             if (!AreWeThereYet.Instance.Settings.ShowTerrainDebug) return;
 
-            if (_terrainData == null)
-            {
-                return;
-            }
+            if (_terrainData == null) return;
 
             UpdateDebugGrid(_gameController.Player.GridPosNum);
 
@@ -48,48 +45,114 @@ namespace AreWeThereYet.Utils
                 var worldPos = new Vector3(pos.GridToWorld(), _lastObserverZ);
                 var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
 
-                SharpDX.Color color; // Change type to SharpDX.Color
+                SharpDX.Color color;
                 if (_debugVisiblePoints.Contains(pos))
                 {
-                    color = SharpDX.Color.Yellow; // Use SharpDX.Color
+                    color = SharpDX.Color.Yellow; // Line of sight trace
                 }
                 else
                 {
+                    // ENHANCED COLOR MAPPING for combined terrain
                     color = value switch
                     {
-                        0 => new SharpDX.Color(0, 128, 0, 128),    // Walkable
-                        1 => new SharpDX.Color(0, 0, 128, 128),    // Low obstacle
-                        2 => new SharpDX.Color(255, 165, 0, 128),  // Medium obstacle
-                        3 => new SharpDX.Color(255, 0, 0, 128),    // High obstacle
-                        4 => new SharpDX.Color(128, 0, 128, 128),  // Blocking
-                        5 => new SharpDX.Color(0, 0, 0, 128),      // Special
-                        _ => new SharpDX.Color(128, 128, 128, 128) // Unknown
+                        0 => new SharpDX.Color(255, 0, 0, 200),      // RED - Impassable walls/void
+                        1 => new SharpDX.Color(100, 255, 100, 180),  // LIGHT GREEN - Basic walkable
+                        2 => new SharpDX.Color(255, 165, 0, 200),    // ORANGE - Static objects (dashable)
+                        3 => new SharpDX.Color(0, 0, 255, 180),      // BLUE - Reserved
+                        4 => new SharpDX.Color(128, 0, 128, 180),    // PURPLE - Reserved  
+                        5 => new SharpDX.Color(0, 200, 0, 160),      // DARK GREEN - Open walkable space
+                        _ => new SharpDX.Color(128, 128, 128, 160)   // GRAY - Unknown
                     };
                 }
 
+                // Draw the terrain value number with colored background
                 evt.Graphics.DrawText(
                     value.ToString(),
                     screenPos,
                     color,
                     FontAlign.Center
                 );
+                
+                // Optional: Add small background circle for better visibility
+                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                {
+                    evt.Graphics.DrawEllipse(screenPos, new Vector2(8, 8), color, 2);
+                }
             }
         }
         
         private void HandleAreaChange(AreaChangeEvent evt)
         {
             _areaDimensions = _gameController.IngameState.Data.AreaDimensions;
-            var rawData = _gameController.IngameState.Data.RawTerrainTargetingData;
+            
+            // Read BOTH terrain layers
+            var terrain = _gameController.IngameState.Data.Terrain;
+            var meleeBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+            var rangedBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+            
+            var numCols = (int)(terrain.NumCols - 1) * 23;
+            var numRows = (int)(terrain.NumRows - 1) * 23;
+            if ((numCols & 1) > 0) numCols++;
 
-            _terrainData = new int[rawData.Length][];
-            for (var y = 0; y < rawData.Length; y++)
+            // Initialize combined terrain data
+            _terrainData = new int[numRows][];
+            
+            for (var y = 0; y < numRows; y++)
             {
-                _terrainData[y] = new int[rawData[y].Length];
-                Array.Copy(rawData[y], _terrainData[y], rawData[y].Length);
+                _terrainData[y] = new int[numCols];
+                var dataIndex = y * terrain.BytesPerRow;
+                
+                for (var x = 0; x < numCols; x += 2)
+                {
+                    // LAYER 1: Basic terrain (LayerMelee)
+                    var meleeB = meleeBytes[dataIndex + (x >> 1)];
+                    var melee1 = (meleeB & 0xf) > 0 ? 1 : 255;  // 1=walkable, 255=wall
+                    var melee2 = (meleeB >> 4) > 0 ? 1 : 255;
+                    
+                    // LAYER 2: Static objects (LayerRanged) 
+                    var rangedB = rangedBytes[dataIndex + (x >> 1)];
+                    var ranged1 = (rangedB & 0xf) > 3 ? 2 : 255;  // 2=dashable object, 255=blocked
+                    var ranged2 = (rangedB >> 4) > 3 ? 2 : 255;
+                    
+                    // COMBINE LAYERS: Create unified terrain values
+                    _terrainData[y][x] = CombineTerrainLayers(melee1, ranged1);
+                    if (x + 1 < numCols)
+                        _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
+                }
             }
 
             UpdateDebugGrid(_gameController.Player.GridPosNum);
         }
+
+        private int CombineTerrainLayers(int meleeValue, int rangedValue)
+        {
+            // Unified terrain value system:
+            // 0 = Impassable wall/void
+            // 1 = Walkable floor  
+            // 2 = Static objects (doors, chests, decorations) - dashable
+            // 3 = Reserved for future use
+            // 4 = Reserved for future use  
+            // 5 = Open walkable space (high confidence)
+
+            if (meleeValue == 1)  // Basic terrain is walkable
+            {
+                return 5;  // Open walkable space
+            }
+            else if (meleeValue == 255)  // Basic terrain blocked
+            {
+                if (rangedValue == 2)  // But has static objects
+                {
+                    return 2;  // Static objects (dashable)
+                }
+                else
+                {
+                    return 0;  // Impassable wall
+                }
+            }
+
+            return 1;  // Default walkable
+        }
+
 
         private void UpdateDebugGrid(Vector2 center)
         {
@@ -149,8 +212,8 @@ namespace AreWeThereYet.Utils
                 {
                     y += stepY;
                     var pos = new Vector2(x, y);
-                    var terrainValue = GetTerrainValue(pos);
-                    if (terrainValue <= TargetLayerValue) return false;
+
+                    if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
                 return true;
@@ -163,8 +226,8 @@ namespace AreWeThereYet.Utils
                 {
                     x += stepX;
                     var pos = new Vector2(x, y);
-                    var terrainValue = GetTerrainValue(pos);
-                    if (terrainValue <= TargetLayerValue) return false;
+                    
+                    if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
                 return true;
@@ -189,8 +252,8 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    var terrainValue = GetTerrainValue(pos);
-                    if (terrainValue <= TargetLayerValue) return false;
+                    
+                    if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
             }
@@ -210,8 +273,8 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    var terrainValue = GetTerrainValue(pos);
-                    if (terrainValue <= TargetLayerValue) return false;
+                    
+                    if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
             }
@@ -219,6 +282,36 @@ namespace AreWeThereYet.Utils
             return true;
         }
 
+        /// <summary>
+        /// Helper method to check if terrain at position is passable based on combined terrain layers
+        /// </summary>
+        private bool IsTerrainPassable(Vector2 pos)
+        {
+            var terrainValue = GetTerrainValue(pos);
+
+            // ENHANCED LOGIC for combined terrain
+            switch (terrainValue)
+            {
+                case 0:  // Impassable walls/void
+                    return false;
+
+                case 2:  // Static objects (doors, chests, decorations) - dashable
+                         // Only passable if dash is enabled, otherwise block
+                    return AreWeThereYet.Instance.Settings.autoPilotDashEnabled?.Value == true;
+
+                case 1:  // Basic walkable terrain
+                case 5:  // Open walkable space
+                    return true;  // Always passable
+
+                case 3:  // Reserved terrain type
+                case 4:  // Reserved terrain type
+                    return true;  // Conservative - assume passable for now
+
+                default:
+                    // Unknown terrain values - conservative approach
+                    return terrainValue > 2;  // Block low values, allow high values
+            }
+        }
 
         private bool IsInBounds(int x, int y)
         {
