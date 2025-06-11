@@ -68,6 +68,9 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Show Terrain Debug")]
     public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
 
+    [Menu("Cast Ray To World Cursor Position")]
+    public ToggleNode CastRayToWorldCursorPos { get; set; } = new ToggleNode(true);
+
     [Menu("Draw At Player Plane")]
     public ToggleNode DrawAtPlayerPlane { get; set; } = new ToggleNode(true);
 

@@ -32,6 +32,10 @@ namespace AreWeThereYet.Utils
         private readonly HashSet<Vector2> _debugVisiblePoints = new();
         private float _lastObserverZ;
 
+        // Cursor ray tracking
+        private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _cursorRays = new();
+        private Vector2 _lastCursorPosition;
+
         public LineOfSight(GameController gameController)
         {
             _gameController = gameController;
@@ -56,9 +60,35 @@ namespace AreWeThereYet.Utils
             // Check if we need to refresh terrain data for door detection
             RefreshTerrainData();
 
-            UpdateDebugGrid(_gameController.Player.GridPosNum);
+            // Update observer with cursor position
+            var cursorWorldPos = AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true
+                ? AreWeThereYet.Instance.GameController.IngameState.ServerData.WorldMousePositionNum.WorldToGrid()
+                : (Vector2?)null;
+
+            UpdateObserver(_gameController.Player.GridPosNum, cursorWorldPos);
+
             RenderTerrainGrid(evt);
+            RenderCursorRays(evt);
             RenderDebugInfo(evt);
+        }
+
+        /// <summary>
+        /// Update observer with optional cursor position for ray casting
+        /// </summary>
+        public void UpdateObserver(Vector2 playerPosition, Vector2? cursorPosition = null)
+        {
+            _debugVisiblePoints.Clear();
+            _cursorRays.Clear();
+            
+            UpdateDebugGrid(playerPosition);
+
+            // Cast ray to cursor position if enabled
+            if (cursorPosition.HasValue && AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true)
+            {
+                _lastCursorPosition = cursorPosition.Value;
+                var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
+                _cursorRays.Add((playerPosition, cursorPosition.Value, isVisible));
+            }
         }
 
         /// <summary>
@@ -382,8 +412,54 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Debug information rendering
+        /// Check if cursor position is visible from player
         /// </summary>
+        public bool IsCursorPositionVisible()
+        {
+            if (_cursorRays.Count == 0) return false;
+            return _cursorRays[0].IsVisible;
+        }
+
+        /// <summary>
+        /// Render the cursor ray line and endpoint
+        /// </summary>
+        private void RenderCursorRays(RenderEvent evt)
+        {
+            if (AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value != true) return;
+
+            foreach (var (start, end, isVisible) in _cursorRays)
+            {
+                // Use DrawAtPlayerPlane setting for consistent height
+                var z = AreWeThereYet.Instance.Settings.DrawAtPlayerPlane?.Value == true
+                    ? _lastObserverZ
+                    : _gameController.IngameState.Data.GetTerrainHeightAt(end);
+
+                var startWorld = new Vector3(start.GridToWorld(), _lastObserverZ);
+                var endWorld = new Vector3(end.GridToWorld(), z);
+
+                var startScreen = _gameController.IngameState.Camera.WorldToScreen(startWorld);
+                var endScreen = _gameController.IngameState.Camera.WorldToScreen(endWorld);
+
+                // Choose color based on line-of-sight result
+                var lineColor = isVisible 
+                    ? new SharpDX.Color(0, 255, 0, 200)    // Green - Clear line of sight
+                    : new SharpDX.Color(255, 0, 0, 200);   // Red - Blocked
+
+                // Draw the ray line
+                evt.Graphics.DrawLine(startScreen, endScreen, 2.0f, lineColor);
+
+                // Draw endpoint circle
+                var endpointColor = isVisible
+                    ? new SharpDX.Color(0, 255, 0, 255)    // Bright green - Visible
+                    : new SharpDX.Color(255, 0, 0, 255);   // Bright red - Blocked
+
+                evt.Graphics.DrawCircleFilled(endScreen, 5.0f, endpointColor, 16);
+            }
+        }
+
+        /// <summary>
+        /// Debug information rendering
+        /// </summary> 
         private void RenderDebugInfo(RenderEvent evt)
         {
             if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
@@ -401,6 +477,19 @@ namespace AreWeThereYet.Utils
                     new Vector2(10, 220),
                     SharpDX.Color.White
                 );
+
+                // Cursor ray debug info
+                if (AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true && _cursorRays.Count > 0)
+                {
+                    var cursorRayStatus = _cursorRays[0].IsVisible ? "CLEAR" : "BLOCKED";
+                    var cursorRayColor = _cursorRays[0].IsVisible ? SharpDX.Color.Green : SharpDX.Color.Red;
+                    
+                    evt.Graphics.DrawText(
+                        $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1})",
+                        new Vector2(10, 240),
+                        cursorRayColor
+                    );
+                }
             }
         }
 
