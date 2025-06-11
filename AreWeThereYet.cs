@@ -61,13 +61,10 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
     {
         base.AreaChange(area);
         
-        var coroutine = new Coroutine(WaitForAreaChange(), this);
-        Core.ParallelRunner.Run(coroutine);
+        // Simple area change - LineOfSight handles everything automatically
         EventBus.Instance.Publish(new AreaChangeEvent());
-
         autoPilot.AreaChange();
     }
-
 
     public override void Render()
     {

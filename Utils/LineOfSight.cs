@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Numerics;
 using ExileCore;
 using ExileCore.Shared.Enums;
 using ExileCore.Shared.Helpers;
+using GameOffsets.Native;
+using SharpDX;
 using Graphics = ExileCore.Graphics;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 
 namespace AreWeThereYet.Utils
 {
@@ -13,16 +16,17 @@ namespace AreWeThereYet.Utils
     {
         private readonly GameController _gameController;
         private int[][] _terrainData;
-        private Vector2 _areaDimensions;
-
-        // LayerRanged is static, LayerMelee is dynamic
-        private byte[] _rangedTerrainBytes;     // LayerRanged - static per area (ranged attacks)
-        private byte[] _walkableTerrainBytes;   // LayerMelee - dynamic (physical walkability)
-        private DateTime _lastWalkableRefresh = DateTime.MinValue;
+        private Vector2i _areaDimensions;
         
-        private int TargetLayerValue => AreWeThereYet.Instance.Settings.TargetLayerValue?.Value ?? 4;
-        private int WalkableRefreshInterval => AreWeThereYet.Instance.Settings.WalkableRefreshInterval?.Value ?? 1000;
-
+        // Periodic refresh for dynamic door detection
+        private DateTime _lastTerrainRefresh = DateTime.MinValue;
+        private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.TerrainRefreshInterval?.Value ?? 500;
+        
+        // TraceMyRay-style settings integration
+        private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
+        private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.TerrainValueForCollision?.Value ?? 2;
+        
+        // Debug visualization (keeping your current approach but enhanced)
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
         private readonly HashSet<Vector2> _debugVisiblePoints = new();
@@ -37,6 +41,11 @@ namespace AreWeThereYet.Utils
             eventBus.Subscribe<RenderEvent>(HandleRender);
         }
 
+        private void HandleAreaChange(AreaChangeEvent evt)
+        {
+            UpdateArea();
+        }
+
         private void HandleRender(RenderEvent evt)
         {
             if (!AreWeThereYet.Instance.Settings.EnableRendering) return;
@@ -44,201 +53,77 @@ namespace AreWeThereYet.Utils
 
             if (_terrainData == null) return;
 
-            // Check if we need to refresh ranged layer
-            CheckAndRefreshWalkableLayer();
+            // Check if we need to refresh terrain data for door detection
+            RefreshTerrainData();
 
             UpdateDebugGrid(_gameController.Player.GridPosNum);
-
-            foreach (var (pos, value) in _debugPoints)
-            {
-                var worldPos = new Vector3(pos.GridToWorld(), _lastObserverZ);
-                var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
-
-                SharpDX.Color color;
-                if (_debugVisiblePoints.Contains(pos))
-                {
-                    color = SharpDX.Color.Yellow; // Line of sight trace
-                }
-                else
-                {
-                    // ENHANCED COLOR MAPPING for combined terrain
-                    color = value switch
-                    {
-                        0 => new SharpDX.Color(255, 0, 0, 200),      // RED - Impassable walls/void
-                        1 => new SharpDX.Color(100, 255, 100, 180),  // LIGHT GREEN - Basic walkable
-                        2 => new SharpDX.Color(255, 165, 0, 200),    // ORANGE - Static objects (dashable)
-                        3 => new SharpDX.Color(0, 0, 255, 180),      // BLUE - Reserved
-                        4 => new SharpDX.Color(128, 0, 128, 180),    // PURPLE - Reserved  
-                        5 => new SharpDX.Color(0, 200, 0, 160),      // DARK GREEN - Open walkable space
-                        _ => new SharpDX.Color(128, 128, 128, 160)   // GRAY - Unknown
-                    };
-                }
-
-                // Draw the terrain value number with colored background
-                evt.Graphics.DrawText(
-                    value.ToString(),
-                    screenPos,
-                    color,
-                    FontAlign.Center
-                );
-                
-                // // Optional: Add small background circle for better visibility
-                // if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
-                // {
-                //     evt.Graphics.DrawEllipse(screenPos, new Vector2(8, 8), color, 2);
-                // }
-            }
-            
-            // Debug info for refresh timing
-            if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
-            {
-                var timeSinceRefresh = (DateTime.Now - _lastWalkableRefresh).TotalMilliseconds;
-                evt.Graphics.DrawText(
-                    $"Walkable Refresh: {timeSinceRefresh:F0}ms ago",
-                    new Vector2(10, 200),
-                    SharpDX.Color.White
-                );
-            }
+            RenderTerrainGrid(evt);
+            RenderDebugInfo(evt);
         }
-        
-        private void HandleAreaChange(AreaChangeEvent evt)
+
+        /// <summary>
+        /// TraceMyRay-style area update with support for both terrain types
+        /// </summary>
+        public void UpdateArea()
         {
             _areaDimensions = _gameController.IngameState.Data.AreaDimensions;
-            
-            var terrain = _gameController.IngameState.Data.Terrain;
-            
-            // Read ranged data ONCE per area (static - projectile line-of-sight)
-            _rangedTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-            
-            // Read walkable data and mark for periodic refresh (dynamic - physical walkability) 
-            RefreshWalkableLayer();
-            
-            // Combine layers and update terrain data
-            CombineTerrainLayers();
-
-            UpdateDebugGrid(_gameController.Player.GridPosNum);
+            UpdateTerrainData();
+            _lastTerrainRefresh = DateTime.Now;
         }
 
-        private void CheckAndRefreshWalkableLayer()
+        /// <summary>
+        /// Hybrid approach: Use TraceMyRay's simple API access with periodic refresh for door detection
+        /// </summary>
+        private void RefreshTerrainData()
         {
-            var timeSinceRefresh = (DateTime.Now - _lastWalkableRefresh).TotalMilliseconds;
+            var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
             
-            if (timeSinceRefresh >= WalkableRefreshInterval)
+            if (timeSinceRefresh >= TerrainRefreshInterval)
             {
-                RefreshWalkableLayer();
-                CombineTerrainLayers();
+                UpdateTerrainData();
+                _lastTerrainRefresh = DateTime.Now;
+                
+                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed terrain data at {DateTime.Now:HH:mm:ss.fff}");
+                }
             }
         }
 
-        private void RefreshWalkableLayer()
+        /// <summary>
+        /// TraceMyRay-style terrain data loading - much simpler than dual-layer approach
+        /// </summary>
+        private void UpdateTerrainData()
         {
             try
             {
-                var terrain = _gameController.IngameState.Data.Terrain;
-                // CORRECTED: Refresh LayerMelee (physical walkability) - this updates for doors!
-                _walkableTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
-                _lastWalkableRefresh = DateTime.Now;
-                
-                // Debug logging
-                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                // Use TraceMyRay's approach - direct API access with configurable terrain type
+                var rawData = UseWalkableTerrainInsteadOfTargetTerrain
+                    ? _gameController.IngameState.Data.RawPathfindingData
+                    : _gameController.IngameState.Data.RawTerrainTargetingData;
+
+                _terrainData = new int[rawData.Length][];
+                for (var y = 0; y < rawData.Length; y++)
                 {
-                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed walkable layer at {_lastWalkableRefresh:HH:mm:ss.fff}");
+                    _terrainData[y] = new int[rawData[y].Length];
+                    Array.Copy(rawData[y], _terrainData[y], rawData[y].Length);
                 }
             }
             catch (Exception ex)
             {
-                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to refresh walkable layer: {ex.Message}");
+                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
             }
         }
 
-        private void CombineTerrainLayers()
-        {
-            if (_rangedTerrainBytes == null || _walkableTerrainBytes == null) return;
-
-            var terrain = _gameController.IngameState.Data.Terrain;
-            var numCols = (int)(terrain.NumCols - 1) * 23;
-            var numRows = (int)(terrain.NumRows - 1) * 23;
-            if ((numCols & 1) > 0) numCols++;
-
-            // Initialize combined terrain data
-            _terrainData = new int[numRows][];
-            
-            for (var y = 0; y < numRows; y++)
-            {
-                _terrainData[y] = new int[numCols];
-                var dataIndex = y * terrain.BytesPerRow;
-                
-                for (var x = 0; x < numCols; x += 2)
-                {
-                    // LAYER 1: Physical walkability (LayerMelee) - refreshed periodically
-                    var walkableB = _walkableTerrainBytes[dataIndex + (x >> 1)];
-                    var walkable1 = (walkableB & 0xf) > 0 ? 5 : 0;  // 5=walkable, 0=blocked
-                    var walkable2 = (walkableB >> 4) > 0 ? 5 : 0;
-                    
-                    // LAYER 2: Ranged line-of-sight (LayerRanged) - static per area
-                    var rangedB = _rangedTerrainBytes[dataIndex + (x >> 1)];
-                    var ranged1 = (rangedB & 0xf) > 3 ? 2 : 0;  // 2=dashable, 0=blocked
-                    var ranged2 = (rangedB >> 4) > 3 ? 2 : 0;
-                    
-                    // COMBINE LAYERS: Priority to physical walkability
-                    _terrainData[y][x] = CombineTerrainLayers(walkable1, ranged1);
-                    if (x + 1 < numCols)
-                        _terrainData[y][x + 1] = CombineTerrainLayers(walkable2, ranged2);
-                }
-            }
-        }
-
-        private int CombineTerrainLayers(int walkableValue, int rangedValue)
-        {
-            // CORRECTED terrain value system:
-            // 0 = Impassable (walls, closed doors)
-            // 2 = Dashable/teleportable (can shoot through, can dash through)  
-            // 5 = Fully walkable (open areas, open doors)
-
-            if (walkableValue == 5)  // Physical walkability takes priority
-            {
-                return 5;  // Fully walkable (open doors, clear paths)
-            }
-            else if (walkableValue == 0)  // Physically blocked
-            {
-                if (rangedValue == 2)  // But ranged attacks can pass through
-                {
-                    return 2;  // Dashable/teleportable (closed gates you can dash through)
-                }
-                else
-                {
-                    return 0;  // Completely impassable (solid walls, closed doors)
-                }
-            }
-            
-            return 1;  // Default fallback
-        }
-
-
-        private void UpdateDebugGrid(Vector2 center)
-        {
-            _debugPoints.Clear();
-            const int size = 200;
-
-            for (var y = -size; y <= size; y++)
-                for (var x = -size; x <= size; x++)
-                {
-                    if (x * x + y * y > size * size) continue;
-
-                    var pos = new Vector2(center.X + x, center.Y + y);
-                    var value = GetTerrainValue(pos);
-                    if (value >= 0) _debugPoints.Add((pos, value));
-                }
-
-            _lastObserverZ = _gameController.IngameState.Data.GetTerrainHeightAt(center);
-        }
-
+        /// <summary>
+        /// Main line-of-sight check with automatic terrain refresh
+        /// </summary>
         public bool HasLineOfSight(Vector2 start, Vector2 end)
         {
             if (_terrainData == null) return false;
 
-            // Check if we need to refresh ranged layer before line-of-sight check
-            CheckAndRefreshWalkableLayer();
+            // Force refresh check before critical pathfinding decisions
+            RefreshTerrainData();
 
             // Update debug visualization
             _debugVisiblePoints.Clear();
@@ -250,6 +135,9 @@ namespace AreWeThereYet.Utils
             return isVisible;
         }
 
+        /// <summary>
+        /// TraceMyRay-style efficient DDA line-of-sight algorithm
+        /// </summary>
         private bool HasLineOfSightInternal(Vector2 start, Vector2 end)
         {
             var startX = (int)start.X;
@@ -268,7 +156,7 @@ namespace AreWeThereYet.Utils
             var stepX = startX < endX ? 1 : -1;
             var stepY = startY < endY ? 1 : -1;
 
-            // Handle straight lines 
+            // Handle straight lines efficiently (TraceMyRay approach)
             if (dx == 0)
             {
                 // Vertical line
@@ -276,7 +164,6 @@ namespace AreWeThereYet.Utils
                 {
                     y += stepY;
                     var pos = new Vector2(x, y);
-
                     if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
@@ -290,14 +177,13 @@ namespace AreWeThereYet.Utils
                 {
                     x += stepX;
                     var pos = new Vector2(x, y);
-                    
                     if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
                 return true;
             }
 
-            // DDA algorithm for diagonal lines 
+            // DDA algorithm for diagonal lines (TraceMyRay approach)
             var deltaErr = Math.Abs((float)dy / dx);
             var error = 0.0f;
 
@@ -316,7 +202,6 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    
                     if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
@@ -337,7 +222,6 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    
                     if (!IsTerrainPassable(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
@@ -346,31 +230,106 @@ namespace AreWeThereYet.Utils
             return true;
         }
 
+        /// <summary>
+        /// TraceMyRay-style configurable terrain passability check
+        /// </summary>
         private bool IsTerrainPassable(Vector2 pos)
         {
             var terrainValue = GetTerrainValue(pos);
-
-            // ENHANCED LOGIC for combined terrain
-            switch (terrainValue)
+            
+            // TraceMyRay's simple, configurable approach
+            // Values <= threshold are blocked, values > threshold are passable
+            if (terrainValue <= TerrainValueForCollision)
+                return false;
+            
+            // Optional: Add dash-through logic for specific values
+            if (terrainValue == TerrainValueForCollision + 1) // e.g., value 3 if threshold is 2
             {
-                case 0:  // Impassable walls/void
-                    return false;
+                return AreWeThereYet.Instance.Settings.autoPilotDashEnabled?.Value == true;
+            }
+            
+            return true; // All higher values are passable
+        }
 
-                case 2:  // Static objects (doors, chests, decorations) - dashable
-                         // Only passable if dash is enabled, otherwise block
-                    return AreWeThereYet.Instance.Settings.autoPilotDashEnabled?.Value == true;
+        private void UpdateDebugGrid(Vector2 center)
+        {
+            _debugPoints.Clear();
+            const int size = 200;
 
-                case 1:  // Basic walkable terrain
-                case 5:  // Open walkable space
-                    return true;  // Always passable
+            for (var y = -size; y <= size; y++)
+                for (var x = -size; x <= size; x++)
+                {
+                    if (x * x + y * y > size * size) continue;
 
-                case 3:  // Reserved terrain type
-                case 4:  // Reserved terrain type
-                    return true;  // Conservative - assume passable for now
+                    var pos = new Vector2(center.X + x, center.Y + y);
+                    var value = GetTerrainValue(pos);
+                    if (value >= 0) _debugPoints.Add((pos, value));
+                }
 
-                default:
-                    // Unknown terrain values - conservative approach
-                    return terrainValue > 2;  // Block low values, allow high values
+            _lastObserverZ = _gameController.IngameState.Data.GetTerrainHeightAt(center);
+        }
+
+        /// <summary>
+        /// Enhanced debug rendering with TraceMyRay-style color mapping
+        /// </summary>
+        private void RenderTerrainGrid(RenderEvent evt)
+        {
+            foreach (var (pos, value) in _debugPoints)
+            {
+                var worldPos = new Vector3(pos.GridToWorld(), _lastObserverZ);
+                var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
+
+                SharpDX.Color color;
+                if (_debugVisiblePoints.Contains(pos))
+                {
+                    color = SharpDX.Color.Yellow; // Line of sight trace
+                }
+                else
+                {
+                    // Enhanced color mapping based on passability
+                    color = value switch
+                    {
+                        0 => new SharpDX.Color(220, 100, 50, 200),   // Red - Impassable
+                        1 => new SharpDX.Color(255, 165, 0, 200),    // Orange - Low obstacle
+                        2 => new SharpDX.Color(255, 255, 0, 180),    // Yellow - Medium obstacle (default threshold)
+                        3 => new SharpDX.Color(100, 255, 100, 180), // Light Green - Dashable
+                        4 => new SharpDX.Color(50, 200, 50, 160),    // Green - Walkable
+                        5 => new SharpDX.Color(0, 150, 0, 160),      // Dark Green - Highly walkable
+                        _ => new SharpDX.Color(128, 128, 128, 160)   // Gray - Unknown
+                    };
+                }
+
+                // Draw terrain value with colored text
+                evt.Graphics.DrawText(
+                    value.ToString(),
+                    screenPos,
+                    color,
+                    FontAlign.Center
+                );
+            }
+        }
+
+        /// <summary>
+        /// Debug information rendering
+        /// </summary>
+        private void RenderDebugInfo(RenderEvent evt)
+        {
+            if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+            {
+                var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
+                var terrainType = UseWalkableTerrainInsteadOfTargetTerrain ? "Pathfinding" : "Targeting";
+                
+                evt.Graphics.DrawText(
+                    $"Terrain: {terrainType} | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
+                    new Vector2(10, 200),
+                    SharpDX.Color.White
+                );
+                
+                evt.Graphics.DrawText(
+                    $"Terrain Data: {_terrainData?.Length ?? 0} rows",
+                    new Vector2(10, 220),
+                    SharpDX.Color.White
+                );
             }
         }
 
@@ -391,12 +350,10 @@ namespace AreWeThereYet.Utils
         public void Clear()
         {
             _terrainData = null;
-            _rangedTerrainBytes = null;
-            _walkableTerrainBytes = null;
             _debugPoints.Clear();
             _debugRays.Clear();
             _debugVisiblePoints.Clear();
-            _lastWalkableRefresh = DateTime.MinValue;
+            _lastTerrainRefresh = DateTime.MinValue;
         }
     }
 }

@@ -71,11 +71,15 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Show Detailed Debug")]
     public ToggleNode ShowDetailedDebug { get; set; } = new ToggleNode(false);
 
-    [Menu("Target Layer Value")]
-    public RangeNode<int> TargetLayerValue { get; set; } = new RangeNode<int>(2, 0, 5);
+    [Menu("Use Walkable Terrain Instead Of Target Terrain")]
+    public ToggleNode UseWalkableTerrainInsteadOfTargetTerrain { get; set; } = new ToggleNode(false);
 
-    [Menu("Walkable Terrain Refresh Interval (ms)")]
-    public RangeNode<int> WalkableRefreshInterval { get; set; } = new RangeNode<int>(1000, 100, 5000);
+    [Menu("Terrain Value For Collision")]
+    public RangeNode<int> TerrainValueForCollision { get; set; } = new RangeNode<int>(2, 0, 5);
+
+    [Menu("Terrain Refresh Interval (ms)")]
+    public RangeNode<int> TerrainRefreshInterval { get; set; } = new RangeNode<int>(500, 100, 2000);
 
     #endregion
+    
 }
