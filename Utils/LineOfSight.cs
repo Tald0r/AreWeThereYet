@@ -299,6 +299,15 @@ namespace AreWeThereYet.Utils
                     };
                 }
 
+                // Draw the terrain values with colored dots
+                if (AreWeThereYet.Instance.Settings.ReplaceTerrainValuesWithDots)
+                    evt.Graphics.DrawCircleFilled(
+                        screenPos,
+                        AreWeThereYet.Instance.Settings.TerrainDotSize.Value,
+                        color,
+                        AreWeThereYet.Instance.Settings.TerrainDotSegments.Value
+                    );
+                else
                 // Draw terrain value with colored text
                 evt.Graphics.DrawText(
                     value.ToString(),
