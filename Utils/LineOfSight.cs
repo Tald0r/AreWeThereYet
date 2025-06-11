@@ -15,13 +15,13 @@ namespace AreWeThereYet.Utils
         private int[][] _terrainData;
         private Vector2 _areaDimensions;
 
-        // Separate storage for static terrain vs dynamic objects
-        private byte[] _staticTerrainBytes;  // LayerMelee - refreshed only on area change
-        private byte[] _dynamicObjectBytes;  // LayerRanged - refreshed periodically
-        private DateTime _lastRangedRefresh = DateTime.MinValue;
+        // LayerRanged is static, LayerMelee is dynamic
+        private byte[] _rangedTerrainBytes;     // LayerRanged - static per area (ranged attacks)
+        private byte[] _walkableTerrainBytes;   // LayerMelee - dynamic (physical walkability)
+        private DateTime _lastWalkableRefresh = DateTime.MinValue;
         
         private int TargetLayerValue => AreWeThereYet.Instance.Settings.TargetLayerValue?.Value ?? 4;
-        private int RangedRefreshInterval => AreWeThereYet.Instance.Settings.RangedRefreshInterval?.Value ?? 1000;
+        private int WalkableRefreshInterval => AreWeThereYet.Instance.Settings.WalkableRefreshInterval?.Value ?? 1000;
 
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
@@ -45,7 +45,7 @@ namespace AreWeThereYet.Utils
             if (_terrainData == null) return;
 
             // Check if we need to refresh ranged layer
-            CheckAndRefreshRangedLayer();
+            CheckAndRefreshWalkableLayer();
 
             UpdateDebugGrid(_gameController.Player.GridPosNum);
 
@@ -82,19 +82,19 @@ namespace AreWeThereYet.Utils
                     FontAlign.Center
                 );
                 
-                // Optional: Add small background circle for better visibility
-                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
-                {
-                    evt.Graphics.DrawEllipse(screenPos, new Vector2(8, 8), color, 2);
-                }
+                // // Optional: Add small background circle for better visibility
+                // if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                // {
+                //     evt.Graphics.DrawEllipse(screenPos, new Vector2(8, 8), color, 2);
+                // }
             }
             
             // Debug info for refresh timing
             if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
             {
-                var timeSinceRefresh = (DateTime.Now - _lastRangedRefresh).TotalMilliseconds;
+                var timeSinceRefresh = (DateTime.Now - _lastWalkableRefresh).TotalMilliseconds;
                 evt.Graphics.DrawText(
-                    $"Ranged Refresh: {timeSinceRefresh:F0}ms ago",
+                    $"Walkable Refresh: {timeSinceRefresh:F0}ms ago",
                     new Vector2(10, 200),
                     SharpDX.Color.White
                 );
@@ -107,11 +107,11 @@ namespace AreWeThereYet.Utils
             
             var terrain = _gameController.IngameState.Data.Terrain;
             
-            // Read static terrain data ONCE per area (LayerMelee)
-            _staticTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+            // Read ranged data ONCE per area (static - projectile line-of-sight)
+            _rangedTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
             
-            // Read dynamic object data and mark for periodic refresh (LayerRanged) 
-            RefreshRangedLayer();
+            // Read walkable data and mark for periodic refresh (dynamic - physical walkability) 
+            RefreshWalkableLayer();
             
             // Combine layers and update terrain data
             CombineTerrainLayers();
@@ -119,40 +119,41 @@ namespace AreWeThereYet.Utils
             UpdateDebugGrid(_gameController.Player.GridPosNum);
         }
 
-        private void CheckAndRefreshRangedLayer()
+        private void CheckAndRefreshWalkableLayer()
         {
-            var timeSinceRefresh = (DateTime.Now - _lastRangedRefresh).TotalMilliseconds;
+            var timeSinceRefresh = (DateTime.Now - _lastWalkableRefresh).TotalMilliseconds;
             
-            if (timeSinceRefresh >= RangedRefreshInterval)
+            if (timeSinceRefresh >= WalkableRefreshInterval)
             {
-                RefreshRangedLayer();
+                RefreshWalkableLayer();
                 CombineTerrainLayers();
             }
         }
 
-        private void RefreshRangedLayer()
+        private void RefreshWalkableLayer()
         {
             try
             {
                 var terrain = _gameController.IngameState.Data.Terrain;
-                _dynamicObjectBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
-                _lastRangedRefresh = DateTime.Now;
+                // CORRECTED: Refresh LayerMelee (physical walkability) - this updates for doors!
+                _walkableTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+                _lastWalkableRefresh = DateTime.Now;
                 
                 // Debug logging
                 if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
                 {
-                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed ranged layer at {_lastRangedRefresh:HH:mm:ss.fff}");
+                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed walkable layer at {_lastWalkableRefresh:HH:mm:ss.fff}");
                 }
             }
             catch (Exception ex)
             {
-                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to refresh ranged layer: {ex.Message}");
+                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to refresh walkable layer: {ex.Message}");
             }
         }
 
         private void CombineTerrainLayers()
         {
-            if (_staticTerrainBytes == null || _dynamicObjectBytes == null) return;
+            if (_rangedTerrainBytes == null || _walkableTerrainBytes == null) return;
 
             var terrain = _gameController.IngameState.Data.Terrain;
             var numCols = (int)(terrain.NumCols - 1) * 23;
@@ -169,51 +170,48 @@ namespace AreWeThereYet.Utils
                 
                 for (var x = 0; x < numCols; x += 2)
                 {
-                    // LAYER 1: Static terrain (LayerMelee) - refreshed only on area change
-                    var meleeB = _staticTerrainBytes[dataIndex + (x >> 1)];
-                    var melee1 = (meleeB & 0xf) > 0 ? 1 : 255;  // 1=walkable, 255=wall
-                    var melee2 = (meleeB >> 4) > 0 ? 1 : 255;
+                    // LAYER 1: Physical walkability (LayerMelee) - refreshed periodically
+                    var walkableB = _walkableTerrainBytes[dataIndex + (x >> 1)];
+                    var walkable1 = (walkableB & 0xf) > 0 ? 5 : 0;  // 5=walkable, 0=blocked
+                    var walkable2 = (walkableB >> 4) > 0 ? 5 : 0;
                     
-                    // LAYER 2: Dynamic objects (LayerRanged) - refreshed periodically
-                    var rangedB = _dynamicObjectBytes[dataIndex + (x >> 1)];
-                    var ranged1 = (rangedB & 0xf) > 3 ? 2 : 255;  // 2=dashable object, 255=blocked
-                    var ranged2 = (rangedB >> 4) > 3 ? 2 : 255;
+                    // LAYER 2: Ranged line-of-sight (LayerRanged) - static per area
+                    var rangedB = _rangedTerrainBytes[dataIndex + (x >> 1)];
+                    var ranged1 = (rangedB & 0xf) > 3 ? 2 : 0;  // 2=dashable, 0=blocked
+                    var ranged2 = (rangedB >> 4) > 3 ? 2 : 0;
                     
-                    // COMBINE LAYERS: Create unified terrain values
-                    _terrainData[y][x] = CombineTerrainLayers(melee1, ranged1);
+                    // COMBINE LAYERS: Priority to physical walkability
+                    _terrainData[y][x] = CombineTerrainLayers(walkable1, ranged1);
                     if (x + 1 < numCols)
-                        _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
+                        _terrainData[y][x + 1] = CombineTerrainLayers(walkable2, ranged2);
                 }
             }
         }
 
-        private int CombineTerrainLayers(int meleeValue, int rangedValue)
+        private int CombineTerrainLayers(int walkableValue, int rangedValue)
         {
-            // Unified terrain value system:
-            // 0 = Impassable wall/void
-            // 1 = Walkable floor  
-            // 2 = Static objects (doors, chests, decorations) - dashable
-            // 3 = Reserved for future use
-            // 4 = Reserved for future use  
-            // 5 = Open walkable space (high confidence)
+            // CORRECTED terrain value system:
+            // 0 = Impassable (walls, closed doors)
+            // 2 = Dashable/teleportable (can shoot through, can dash through)  
+            // 5 = Fully walkable (open areas, open doors)
 
-            if (meleeValue == 1)  // Basic terrain is walkable
+            if (walkableValue == 5)  // Physical walkability takes priority
             {
-                return 5;  // Open walkable space
+                return 5;  // Fully walkable (open doors, clear paths)
             }
-            else if (meleeValue == 255)  // Basic terrain blocked
+            else if (walkableValue == 0)  // Physically blocked
             {
-                if (rangedValue == 2)  // But has static objects
+                if (rangedValue == 2)  // But ranged attacks can pass through
                 {
-                    return 2;  // Static objects (dashable)
+                    return 2;  // Dashable/teleportable (closed gates you can dash through)
                 }
                 else
                 {
-                    return 0;  // Impassable wall
+                    return 0;  // Completely impassable (solid walls, closed doors)
                 }
             }
-
-            return 1;  // Default walkable
+            
+            return 1;  // Default fallback
         }
 
 
@@ -240,7 +238,7 @@ namespace AreWeThereYet.Utils
             if (_terrainData == null) return false;
 
             // Check if we need to refresh ranged layer before line-of-sight check
-            CheckAndRefreshRangedLayer();
+            CheckAndRefreshWalkableLayer();
 
             // Update debug visualization
             _debugVisiblePoints.Clear();
@@ -393,12 +391,12 @@ namespace AreWeThereYet.Utils
         public void Clear()
         {
             _terrainData = null;
-            _staticTerrainBytes = null;
-            _dynamicObjectBytes = null;
+            _rangedTerrainBytes = null;
+            _walkableTerrainBytes = null;
             _debugPoints.Clear();
             _debugRays.Clear();
             _debugVisiblePoints.Clear();
-            _lastRangedRefresh = DateTime.MinValue;
+            _lastWalkableRefresh = DateTime.MinValue;
         }
     }
 }

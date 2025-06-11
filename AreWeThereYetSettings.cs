@@ -74,8 +74,8 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Target Layer Value")]
     public RangeNode<int> TargetLayerValue { get; set; } = new RangeNode<int>(2, 0, 5);
 
-    [Menu("Map Objects Refresh Interval (ms)")]
-    public RangeNode<int> RangedRefreshInterval { get; set; } = new RangeNode<int>(1000, 100, 5000);
+    [Menu("Walkable Terrain Refresh Interval (ms)")]
+    public RangeNode<int> WalkableRefreshInterval { get; set; } = new RangeNode<int>(1000, 100, 5000);
 
     #endregion
 }
