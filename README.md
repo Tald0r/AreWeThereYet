@@ -1,32 +1,33 @@
-# README.md
-
 # AreWeThereYet
 
-A standalone AutoPilot plugin for Path of Exile that follows party leaders and automates basic movement tasks.
+AutoPilot plugin for Path of Exile that follows party leaders with intelligent terrain detection and pathfinding.
 
-## Features
+## Core Features
 
-- Follow party leader automatically
-- Portal detection and usage
-- Quest item pickup
-- Dash support for movement skills
-- Grace period handling
-- Configurable hotkeys and settings
-- - Configurable input delays
+- **Leader Following**: Automatically follows specified party leader
+- **Smart Pathfinding**: Advanced terrain detection with real-time door state monitoring
+- **Portal Management**: Detects and uses portals/area transitions automatically
+- **Dash Integration**: Intelligent dash usage through obstacles and closed doors
+- **Quest Items**: Automatic pickup of quest items near the leader
 
-## Installation
+## Terrain Debugging
 
-1. Place the plugin files in your ExileAPI plugins directory
-2. Build the project or use the compiled DLL
-3. Configure the leader name in the plugin settings
-4. Set appropriate hotkeys for movement and dash abilities
+- **Real-time Raycast**: Enable cursor position raycast to test line-of-sight
+- **Terrain Visualization**: Color-coded terrain values showing walkable/blocked areas
+- **Door Detection**: Live monitoring of door states (open/closed) for follower logic
+- **Debug Settings**: Comprehensive terrain debugging tools under Debug → Raycast settings
 
-## Configuration
+## Quick Setup
 
-- **Leader Name**: Set the name of the party leader to follow
-- **Movement Key**: Key used for basic movement
-- **Dash Key**: Key used for dash/movement skills
-- **Toggle Key**: Hotkey to enable/disable the autopilot
-- **Follow Distance**: Distance to maintain from leader
-- **Transition Distance**: Detection range for portals and transitions
+1. Install in your ExileCore plugins directory
+2. Set **Leader Name** in AutoPilot settings
+3. Configure **Movement Key** and **Dash Key** 
+4. Use **Toggle Key** to enable/disable following
+5. Enable terrain debug visualization to fine-tune pathfinding
 
+## Key Settings
+
+- **AutoPilot → Leader Name**: Player name to follow
+- **AutoPilot → Keep within Distance**: Follow distance (default: 200)
+- **Debug → Raycast → Cast Ray To World Cursor Position**: Enable cursor raycast debugging
+- **Debug → Terrain → Refresh Interval**: Real-time terrain update frequency (default: 500ms)
