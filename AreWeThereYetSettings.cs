@@ -68,6 +68,15 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Show Terrain Debug")]
     public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
 
+    [Menu("Replace Terrain Values With Dots")]
+    public ToggleNode ReplaceTerrainValuesWithDots { get; set; } = new ToggleNode(false);
+
+    [Menu("Terrain Dot Size")]
+    public RangeNode<float> TerrainDotSize { get; set; } = new RangeNode<float>(3.0f, 1.0f, 100.0f);
+
+    [Menu("Terrain Dot Segments")]
+    public RangeNode<int> TerrainDotSegments { get; set; } = new RangeNode<int>(16, 3, 6);
+
     [Menu("Show Detailed Debug")]
     public ToggleNode ShowDetailedDebug { get; set; } = new ToggleNode(false);
 
