@@ -276,7 +276,12 @@ namespace AreWeThereYet.Utils
         {
             foreach (var (pos, value) in _debugPoints)
             {
-                var worldPos = new Vector3(pos.GridToWorld(), _lastObserverZ);
+                // Use DrawAtPlayerPlane setting like TraceMyRay
+                var z = AreWeThereYet.Instance.Settings.DrawAtPlayerPlane?.Value == true
+                    ? _lastObserverZ
+                    : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
+                    
+                var worldPos = new Vector3(pos.GridToWorld(), z);
                 var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
 
                 SharpDX.Color color;
@@ -299,8 +304,8 @@ namespace AreWeThereYet.Utils
                     };
                 }
 
-                // Draw the terrain values with colored dots
-                if (AreWeThereYet.Instance.Settings.ReplaceTerrainValuesWithDots)
+                // Draw the terrain values with colored dots or numbers
+                if (AreWeThereYet.Instance.Settings.ReplaceTerrainValuesWithDots?.Value == true)
                     evt.Graphics.DrawCircleFilled(
                         screenPos,
                         AreWeThereYet.Instance.Settings.TerrainDotSize.Value,
@@ -308,13 +313,12 @@ namespace AreWeThereYet.Utils
                         AreWeThereYet.Instance.Settings.TerrainDotSegments.Value
                     );
                 else
-                // Draw terrain value with colored text
-                evt.Graphics.DrawText(
-                    value.ToString(),
-                    screenPos,
-                    color,
-                    FontAlign.Center
-                );
+                    evt.Graphics.DrawText(
+                        value.ToString(),
+                        screenPos,
+                        color,
+                        FontAlign.Center
+                    );
             }
         }
 

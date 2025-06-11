@@ -68,6 +68,9 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Show Terrain Debug")]
     public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
 
+    [Menu("Draw At Player Plane")]
+    public ToggleNode DrawAtPlayerPlane { get; set; } = new ToggleNode(true);
+
     [Menu("Replace Terrain Values With Dots")]
     public ToggleNode ReplaceTerrainValuesWithDots { get; set; } = new ToggleNode(false);
 
