@@ -15,7 +15,13 @@ namespace AreWeThereYet.Utils
         private int[][] _terrainData;
         private Vector2 _areaDimensions;
 
+        // Separate storage for static terrain vs dynamic objects
+        private byte[] _staticTerrainBytes;  // LayerMelee - refreshed only on area change
+        private byte[] _dynamicObjectBytes;  // LayerRanged - refreshed periodically
+        private DateTime _lastRangedRefresh = DateTime.MinValue;
+        
         private int TargetLayerValue => AreWeThereYet.Instance.Settings.TargetLayerValue?.Value ?? 4;
+        private int RangedRefreshInterval => AreWeThereYet.Instance.Settings.RangedRefreshInterval?.Value ?? 1000;
 
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
@@ -37,6 +43,9 @@ namespace AreWeThereYet.Utils
             if (!AreWeThereYet.Instance.Settings.ShowTerrainDebug) return;
 
             if (_terrainData == null) return;
+
+            // Check if we need to refresh ranged layer
+            CheckAndRefreshRangedLayer();
 
             UpdateDebugGrid(_gameController.Player.GridPosNum);
 
@@ -79,17 +88,73 @@ namespace AreWeThereYet.Utils
                     evt.Graphics.DrawEllipse(screenPos, new Vector2(8, 8), color, 2);
                 }
             }
+            
+            // Debug info for refresh timing
+            if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+            {
+                var timeSinceRefresh = (DateTime.Now - _lastRangedRefresh).TotalMilliseconds;
+                evt.Graphics.DrawText(
+                    $"Ranged Refresh: {timeSinceRefresh:F0}ms ago",
+                    new Vector2(10, 200),
+                    SharpDX.Color.White
+                );
+            }
         }
         
         private void HandleAreaChange(AreaChangeEvent evt)
         {
             _areaDimensions = _gameController.IngameState.Data.AreaDimensions;
             
-            // Read BOTH terrain layers
             var terrain = _gameController.IngameState.Data.Terrain;
-            var meleeBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
-            var rangedBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
             
+            // Read static terrain data ONCE per area (LayerMelee)
+            _staticTerrainBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);
+            
+            // Read dynamic object data and mark for periodic refresh (LayerRanged) 
+            RefreshRangedLayer();
+            
+            // Combine layers and update terrain data
+            CombineTerrainLayers();
+
+            UpdateDebugGrid(_gameController.Player.GridPosNum);
+        }
+
+        private void CheckAndRefreshRangedLayer()
+        {
+            var timeSinceRefresh = (DateTime.Now - _lastRangedRefresh).TotalMilliseconds;
+            
+            if (timeSinceRefresh >= RangedRefreshInterval)
+            {
+                RefreshRangedLayer();
+                CombineTerrainLayers();
+            }
+        }
+
+        private void RefreshRangedLayer()
+        {
+            try
+            {
+                var terrain = _gameController.IngameState.Data.Terrain;
+                _dynamicObjectBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size);
+                _lastRangedRefresh = DateTime.Now;
+                
+                // Debug logging
+                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed ranged layer at {_lastRangedRefresh:HH:mm:ss.fff}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to refresh ranged layer: {ex.Message}");
+            }
+        }
+
+        private void CombineTerrainLayers()
+        {
+            if (_staticTerrainBytes == null || _dynamicObjectBytes == null) return;
+
+            var terrain = _gameController.IngameState.Data.Terrain;
             var numCols = (int)(terrain.NumCols - 1) * 23;
             var numRows = (int)(terrain.NumRows - 1) * 23;
             if ((numCols & 1) > 0) numCols++;
@@ -104,13 +169,13 @@ namespace AreWeThereYet.Utils
                 
                 for (var x = 0; x < numCols; x += 2)
                 {
-                    // LAYER 1: Basic terrain (LayerMelee)
-                    var meleeB = meleeBytes[dataIndex + (x >> 1)];
+                    // LAYER 1: Static terrain (LayerMelee) - refreshed only on area change
+                    var meleeB = _staticTerrainBytes[dataIndex + (x >> 1)];
                     var melee1 = (meleeB & 0xf) > 0 ? 1 : 255;  // 1=walkable, 255=wall
                     var melee2 = (meleeB >> 4) > 0 ? 1 : 255;
                     
-                    // LAYER 2: Static objects (LayerRanged) 
-                    var rangedB = rangedBytes[dataIndex + (x >> 1)];
+                    // LAYER 2: Dynamic objects (LayerRanged) - refreshed periodically
+                    var rangedB = _dynamicObjectBytes[dataIndex + (x >> 1)];
                     var ranged1 = (rangedB & 0xf) > 3 ? 2 : 255;  // 2=dashable object, 255=blocked
                     var ranged2 = (rangedB >> 4) > 3 ? 2 : 255;
                     
@@ -120,8 +185,6 @@ namespace AreWeThereYet.Utils
                         _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
                 }
             }
-
-            UpdateDebugGrid(_gameController.Player.GridPosNum);
         }
 
         private int CombineTerrainLayers(int meleeValue, int rangedValue)
@@ -175,6 +238,9 @@ namespace AreWeThereYet.Utils
         public bool HasLineOfSight(Vector2 start, Vector2 end)
         {
             if (_terrainData == null) return false;
+
+            // Check if we need to refresh ranged layer before line-of-sight check
+            CheckAndRefreshRangedLayer();
 
             // Update debug visualization
             _debugVisiblePoints.Clear();
@@ -282,9 +348,6 @@ namespace AreWeThereYet.Utils
             return true;
         }
 
-        /// <summary>
-        /// Helper method to check if terrain at position is passable based on combined terrain layers
-        /// </summary>
         private bool IsTerrainPassable(Vector2 pos)
         {
             var terrainValue = GetTerrainValue(pos);
@@ -330,9 +393,12 @@ namespace AreWeThereYet.Utils
         public void Clear()
         {
             _terrainData = null;
+            _staticTerrainBytes = null;
+            _dynamicObjectBytes = null;
             _debugPoints.Clear();
             _debugRays.Clear();
             _debugVisiblePoints.Clear();
+            _lastRangedRefresh = DateTime.MinValue;
         }
     }
 }
