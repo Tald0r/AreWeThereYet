@@ -23,7 +23,7 @@ namespace AreWeThereYet.Utils
         private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.TerrainRefreshInterval?.Value ?? 500;
         
         // TraceMyRay-style settings integration
-        private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
+        //private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
         private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.TerrainValueForCollision?.Value ?? 2;
         
         // Debug visualization (keeping your current approach but enhanced)
@@ -91,28 +91,87 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// TraceMyRay-style terrain data loading - much simpler than dual-layer approach
+        /// Enhanced terrain data loading - combines both pathfinding and targeting data
         /// </summary>
         private void UpdateTerrainData()
         {
             try
             {
-                // Use TraceMyRay's approach - direct API access with configurable terrain type
-                var rawData = UseWalkableTerrainInsteadOfTargetTerrain
-                    ? _gameController.IngameState.Data.RawPathfindingData
-                    : _gameController.IngameState.Data.RawTerrainTargetingData;
+                // Read BOTH terrain data sources (like the original dual-layer approach)
+                var pathfindingData = _gameController.IngameState.Data.RawPathfindingData;    // Dynamic walkability (doors)
+                var targetingData = _gameController.IngameState.Data.RawTerrainTargetingData; // Static ranged line-of-sight
 
-                _terrainData = new int[rawData.Length][];
-                for (var y = 0; y < rawData.Length; y++)
+                if (pathfindingData == null || targetingData == null)
                 {
-                    _terrainData[y] = new int[rawData[y].Length];
-                    Array.Copy(rawData[y], _terrainData[y], rawData[y].Length);
+                    AreWeThereYet.Instance.LogError("LineOfSight: One or both terrain data sources are null");
+                    return;
+                }
+
+                // Ensure both data sources have the same dimensions
+                var rows = Math.Min(pathfindingData.Length, targetingData.Length);
+                _terrainData = new int[rows][];
+                
+                for (var y = 0; y < rows; y++)
+                {
+                    var cols = Math.Min(pathfindingData[y].Length, targetingData[y].Length);
+                    _terrainData[y] = new int[cols];
+                    
+                    for (var x = 0; x < cols; x++)
+                    {
+                        // Combine both terrain layers using the modern APIs
+                        var walkableValue = pathfindingData[y][x];   // Dynamic walkability
+                        var rangedValue = targetingData[y][x];       // Static ranged data
+                        
+                        _terrainData[y][x] = CombineModernTerrainLayers(walkableValue, rangedValue);
+                    }
+                }
+                
+                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Combined terrain data - Pathfinding: {pathfindingData.Length}x{pathfindingData[0].Length}, Targeting: {targetingData.Length}x{targetingData[0].Length}");
                 }
             }
             catch (Exception ex)
             {
                 AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Combines modern ExileCore terrain data sources (replaces the old dual-layer byte parsing)
+        /// </summary>
+        private int CombineModernTerrainLayers(int walkableValue, int rangedValue)
+        {
+            // Modern terrain combination logic using ExileCore's processed data
+            // Values are already processed by ExileCore, so we use them directly
+            
+            // Priority system:
+            // 1. If walkable value indicates passable terrain, use it
+            // 2. If walkable is blocked but ranged allows passage, mark as dashable
+            // 3. Otherwise, blocked
+            
+            // High walkable values (4-5) = passable terrain
+            if (walkableValue >= 4)
+            {
+                return 5; // Fully walkable (open areas, open doors)
+            }
+            
+            // Low walkable values (0-2) = blocked, but check ranged
+            if (walkableValue <= 2)
+            {
+                // If ranged value allows passage (3-5), it's dashable
+                if (rangedValue >= 3)
+                {
+                    return 2; // Dashable/teleportable (closed doors you can dash through)
+                }
+                else
+                {
+                    return 0; // Completely impassable (solid walls)
+                }
+            }
+            
+            // Medium walkable values (3) = partially passable
+            return 3; // Moderate terrain
         }
 
         /// <summary>
@@ -297,7 +356,7 @@ namespace AreWeThereYet.Utils
                         0 => new SharpDX.Color(220, 100, 50, 200),   // Red - Impassable
                         1 => new SharpDX.Color(255, 165, 0, 200),    // Orange - Low obstacle
                         2 => new SharpDX.Color(255, 255, 0, 180),    // Yellow - Medium obstacle (default threshold)
-                        3 => new SharpDX.Color(100, 255, 100, 180), // Light Green - Dashable
+                        3 => new SharpDX.Color(100, 255, 100, 180),  // Light Green - Dashable
                         4 => new SharpDX.Color(50, 200, 50, 160),    // Green - Walkable
                         5 => new SharpDX.Color(0, 150, 0, 160),      // Dark Green - Highly walkable
                         _ => new SharpDX.Color(128, 128, 128, 160)   // Gray - Unknown
@@ -330,16 +389,15 @@ namespace AreWeThereYet.Utils
             if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
             {
                 var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
-                var terrainType = UseWalkableTerrainInsteadOfTargetTerrain ? "Pathfinding" : "Targeting";
                 
                 evt.Graphics.DrawText(
-                    $"Terrain: {terrainType} | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
+                    $"Terrain: Combined (Pathfinding + Targeting) | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
                     new Vector2(10, 200),
                     SharpDX.Color.White
                 );
                 
                 evt.Graphics.DrawText(
-                    $"Terrain Data: {_terrainData?.Length ?? 0} rows",
+                    $"Terrain Data: {_terrainData?.Length ?? 0} rows (Combined layers)",
                     new Vector2(10, 220),
                     SharpDX.Color.White
                 );

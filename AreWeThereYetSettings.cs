@@ -83,8 +83,8 @@ public class AreWeThereYetSettings : ISettings
     [Menu("Show Detailed Debug")]
     public ToggleNode ShowDetailedDebug { get; set; } = new ToggleNode(false);
 
-    [Menu("Use Walkable Terrain Instead Of Target Terrain")]
-    public ToggleNode UseWalkableTerrainInsteadOfTargetTerrain { get; set; } = new ToggleNode(false);
+    // [Menu("Use Walkable Terrain Instead Of Target Terrain")]
+    // public ToggleNode UseWalkableTerrainInsteadOfTargetTerrain { get; set; } = new ToggleNode(false);
 
     [Menu("Terrain Value For Collision")]
     public RangeNode<int> TerrainValueForCollision { get; set; } = new RangeNode<int>(2, 0, 5);
