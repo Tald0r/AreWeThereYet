@@ -6,95 +6,73 @@ using SharpDX;
 
 namespace AreWeThereYet;
 
+public static class ColorExtensions
+{
+    public static Color ToSharpDx(this System.Drawing.Color color)
+    {
+        return new Color(color.R, color.G, color.B, color.A);
+    }
+}
+
 public class AreWeThereYetSettings : ISettings
 {
-    public ToggleNode Enable { get; set; } = new ToggleNode(false);
+    public ToggleNode Enable { get; set; } = new(false);
+    public AutoPilotSettings AutoPilot { get; set; } = new();
+    public DebugSettings Debug { get; set; } = new();
+}
 
-    #region AutoPilot
-
-    [Menu("AutoPilot Enabled")]
-    public ToggleNode autoPilotEnabled { get; set; } = new ToggleNode(false);
-
-    [Menu("Remove Grace Period")]
-    public ToggleNode autoPilotGrace { get; set; } = new ToggleNode(true);
-
-    [Menu("Leader Name")]
-    public TextNode autoPilotLeader { get; set; } = new TextNode("");
-
-    [Menu("Dash Enabled")]
-    public ToggleNode autoPilotDashEnabled { get; set; } = new ToggleNode(false);
-
-    [Menu("Close Follow")]
-    public ToggleNode autoPilotCloseFollow { get; set; } = new ToggleNode(true);
-
-    [Menu("Dash Key")]
-    public HotkeyNode autoPilotDashKey { get; set; } = new HotkeyNode(Keys.W);
-
-    [Menu("Move Key")]
-    public HotkeyNode autoPilotMoveKey { get; set; } = new HotkeyNode(Keys.Q);
-
-    [Menu("Toggle Key")]
-    public HotkeyNode autoPilotToggleKey { get; set; } = new HotkeyNode(Keys.NumPad9);
-
-    [Menu("Random Click Offset")]
-    public RangeNode<int> autoPilotRandomClickOffset { get; set; } = new RangeNode<int>(10, 1, 100);
-
-    [Menu("Input Frequency")]
-    public RangeNode<int> autoPilotInputFrequency { get; set; } = new RangeNode<int>(50, 1, 100);
-
-    [Menu("Keep within Distance")]
-    public RangeNode<int> autoPilotPathfindingNodeDistance { get; set; } = new RangeNode<int>(200, 10, 1000);
-
-    [Menu("Transition Distance")]
-    public RangeNode<int> autoPilotClearPathDistance { get; set; } = new RangeNode<int>(500, 100, 5000);
-
-    #endregion
-
-    #region Visual Settings
-
-    [Menu("Task Line Width")]
-    public RangeNode<int> TaskLineWidth { get; set; } = new RangeNode<int>(3, 0, 10);
-
-    [Menu("Task Line Color")]
-    public ColorNode TaskColor { get; set; } = new ColorNode(Color.Green);
-
-    #endregion
-
-    #region Debug Settings
-
-    [Menu("Enable Rendering")]
-    public ToggleNode EnableRendering { get; set; } = new ToggleNode(true);
-
-    [Menu("Show Terrain Debug")]
-    public ToggleNode ShowTerrainDebug { get; set; } = new ToggleNode(false);
-
-    [Menu("Cast Ray To World Cursor Position")]
-    public ToggleNode CastRayToWorldCursorPos { get; set; } = new ToggleNode(true);
-
-    [Menu("Draw At Player Plane")]
-    public ToggleNode DrawAtPlayerPlane { get; set; } = new ToggleNode(true);
-
-    [Menu("Replace Terrain Values With Dots")]
-    public ToggleNode ReplaceTerrainValuesWithDots { get; set; } = new ToggleNode(false);
-
-    [Menu("Terrain Dot Size")]
-    public RangeNode<float> TerrainDotSize { get; set; } = new RangeNode<float>(3.0f, 1.0f, 100.0f);
-
-    [Menu("Terrain Dot Segments")]
-    public RangeNode<int> TerrainDotSegments { get; set; } = new RangeNode<int>(16, 3, 6);
-
-    [Menu("Show Detailed Debug")]
-    public ToggleNode ShowDetailedDebug { get; set; } = new ToggleNode(false);
-
-    // [Menu("Use Walkable Terrain Instead Of Target Terrain")]
-    // public ToggleNode UseWalkableTerrainInsteadOfTargetTerrain { get; set; } = new ToggleNode(false);
-
-    [Menu("Terrain Value For Collision")]
-    public RangeNode<int> TerrainValueForCollision { get; set; } = new RangeNode<int>(2, 0, 5);
-
-    [Menu("Terrain Refresh Interval (ms)")]
-    public RangeNode<int> TerrainRefreshInterval { get; set; } = new RangeNode<int>(500, 100, 2000);
-
-    #endregion
+[Submenu(CollapsedByDefault = false)]
+public class AutoPilotSettings
+{
+    public ToggleNode Enabled { get; set; } = new(false);
+    public ToggleNode RemoveGracePeriod { get; set; } = new(true);
+    public TextNode LeaderName { get; set; } = new("");
+    public ToggleNode DashEnabled { get; set; } = new(false);
+    public ToggleNode CloseFollow { get; set; } = new(true);
     
+    public HotkeyNode DashKey { get; set; } = new(Keys.W);
+    public HotkeyNode MoveKey { get; set; } = new(Keys.Q);
+    public HotkeyNode ToggleKey { get; set; } = new(Keys.NumPad9);
+    
+    public RangeNode<int> RandomClickOffset { get; set; } = new(10, 1, 100);
+    public RangeNode<int> InputFrequency { get; set; } = new(50, 1, 100);
+    public RangeNode<int> KeepWithinDistance { get; set; } = new(200, 10, 1000);
+    public RangeNode<int> TransitionDistance { get; set; } = new(500, 100, 5000);
+
+    public VisualSettings Visual { get; set; } = new();
+
+    [Submenu(CollapsedByDefault = true)]
+    public class VisualSettings
+    {
+        public RangeNode<int> TaskLineWidth { get; set; } = new(3, 0, 10);
+        public ColorNode TaskLineColor { get; set; } = new(System.Drawing.Color.Green.ToSharpDx());
+    }
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class DebugSettings
+{
+    public ToggleNode EnableRendering { get; set; } = new(true);
+    public ToggleNode ShowTerrainDebug { get; set; } = new(false);
+    public ToggleNode ShowDetailedDebug { get; set; } = new(false);
+    
+    public RaycastSettings Raycast { get; set; } = new();
+    public TerrainSettings Terrain { get; set; } = new();
+
+    [Submenu(CollapsedByDefault = false)]
+    public class RaycastSettings
+    {
+        public ToggleNode CastRayToWorldCursorPos { get; set; } = new(true);
+        public ToggleNode DrawAtPlayerPlane { get; set; } = new(true);
+        public RangeNode<int> TerrainValueForCollision { get; set; } = new(2, 0, 5);
+    }
+
+    [Submenu(CollapsedByDefault = false)]
+    public class TerrainSettings
+    {
+        public ToggleNode ReplaceValuesWithDots { get; set; } = new(false);
+        public RangeNode<float> DotSize { get; set; } = new(3.0f, 1.0f, 100.0f);
+        public RangeNode<int> DotSegments { get; set; } = new(16, 3, 6);
+        public RangeNode<int> RefreshInterval { get; set; } = new(500, 100, 2000);
+    }
 }

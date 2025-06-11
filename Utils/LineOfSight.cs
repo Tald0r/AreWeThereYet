@@ -20,11 +20,11 @@ namespace AreWeThereYet.Utils
         
         // Periodic refresh for dynamic door detection
         private DateTime _lastTerrainRefresh = DateTime.MinValue;
-        private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.TerrainRefreshInterval?.Value ?? 500;
+        private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.Debug.Terrain.RefreshInterval?.Value ?? 500;
         
         // TraceMyRay-style settings integration
         //private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
-        private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.TerrainValueForCollision?.Value ?? 2;
+        private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.Debug.Raycast.TerrainValueForCollision?.Value ?? 2;
         
         // Debug visualization (keeping your current approach but enhanced)
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
@@ -52,8 +52,8 @@ namespace AreWeThereYet.Utils
 
         private void HandleRender(RenderEvent evt)
         {
-            if (!AreWeThereYet.Instance.Settings.EnableRendering) return;
-            if (!AreWeThereYet.Instance.Settings.ShowTerrainDebug) return;
+            if (!AreWeThereYet.Instance.Settings.Debug.EnableRendering) return;
+            if (!AreWeThereYet.Instance.Settings.Debug.ShowTerrainDebug) return;
 
             if (_terrainData == null) return;
 
@@ -61,7 +61,7 @@ namespace AreWeThereYet.Utils
             RefreshTerrainData();
 
             // Update observer with cursor position
-            var cursorWorldPos = AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true
+            var cursorWorldPos = AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true
                 ? AreWeThereYet.Instance.GameController.IngameState.ServerData.WorldMousePositionNum.WorldToGrid()
                 : (Vector2?)null;
 
@@ -83,7 +83,7 @@ namespace AreWeThereYet.Utils
             UpdateDebugGrid(playerPosition);
 
             // Cast ray to cursor position if enabled
-            if (cursorPosition.HasValue && AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true)
+            if (cursorPosition.HasValue && AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true)
             {
                 _lastCursorPosition = cursorPosition.Value;
                 var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
@@ -113,7 +113,7 @@ namespace AreWeThereYet.Utils
                 UpdateTerrainData();
                 _lastTerrainRefresh = DateTime.Now;
                 
-                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed terrain data at {DateTime.Now:HH:mm:ss.fff}");
                 }
@@ -156,7 +156,7 @@ namespace AreWeThereYet.Utils
                     }
                 }
                 
-                if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"LineOfSight: Combined terrain data - Pathfinding: {pathfindingData.Length}x{pathfindingData[0].Length}, Targeting: {targetingData.Length}x{targetingData[0].Length}");
                 }
@@ -334,7 +334,7 @@ namespace AreWeThereYet.Utils
             // Optional: Add dash-through logic for specific values
             if (terrainValue == TerrainValueForCollision + 1) // e.g., value 3 if threshold is 2
             {
-                return AreWeThereYet.Instance.Settings.autoPilotDashEnabled?.Value == true;
+                return AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true;
             }
             
             return true; // All higher values are passable
@@ -366,7 +366,7 @@ namespace AreWeThereYet.Utils
             foreach (var (pos, value) in _debugPoints)
             {
                 // Use DrawAtPlayerPlane setting like TraceMyRay
-                var z = AreWeThereYet.Instance.Settings.DrawAtPlayerPlane?.Value == true
+                var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
                     ? _lastObserverZ
                     : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
                     
@@ -394,12 +394,12 @@ namespace AreWeThereYet.Utils
                 }
 
                 // Draw the terrain values with colored dots or numbers
-                if (AreWeThereYet.Instance.Settings.ReplaceTerrainValuesWithDots?.Value == true)
+                if (AreWeThereYet.Instance.Settings.Debug.Terrain.ReplaceValuesWithDots?.Value == true)
                     evt.Graphics.DrawCircleFilled(
                         screenPos,
-                        AreWeThereYet.Instance.Settings.TerrainDotSize.Value,
+                        AreWeThereYet.Instance.Settings.Debug.Terrain.DotSize.Value,
                         color,
-                        AreWeThereYet.Instance.Settings.TerrainDotSegments.Value
+                        AreWeThereYet.Instance.Settings.Debug.Terrain.DotSegments.Value
                     );
                 else
                     evt.Graphics.DrawText(
@@ -425,12 +425,12 @@ namespace AreWeThereYet.Utils
         /// </summary>
         private void RenderCursorRays(RenderEvent evt)
         {
-            if (AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value != true) return;
+            if (AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value != true) return;
 
             foreach (var (start, end, isVisible) in _cursorRays)
             {
                 // Use DrawAtPlayerPlane setting for consistent height
-                var z = AreWeThereYet.Instance.Settings.DrawAtPlayerPlane?.Value == true
+                var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
                     ? _lastObserverZ
                     : _gameController.IngameState.Data.GetTerrainHeightAt(end);
 
@@ -462,7 +462,7 @@ namespace AreWeThereYet.Utils
         /// </summary> 
         private void RenderDebugInfo(RenderEvent evt)
         {
-            if (AreWeThereYet.Instance.Settings.ShowDetailedDebug?.Value == true)
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
                 var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
                 
@@ -479,7 +479,7 @@ namespace AreWeThereYet.Utils
                 );
 
                 // Cursor ray debug info
-                if (AreWeThereYet.Instance.Settings.CastRayToWorldCursorPos?.Value == true && _cursorRays.Count > 0)
+                if (AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true && _cursorRays.Count > 0)
                 {
                     var cursorRayStatus = _cursorRays[0].IsVisible ? "CLEAR" : "BLOCKED";
                     var cursorRayColor = _cursorRays[0].IsVisible ? SharpDX.Color.Green : SharpDX.Color.Red;

@@ -35,8 +35,8 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         GameController.LeftPanel.WantUse(() => Settings.Enable);
         skillCoroutine = new Coroutine(WaitForAreaChange(), this);
         Core.ParallelRunner.Run(skillCoroutine);
-        Input.RegisterKey(Settings.autoPilotToggleKey.Value);
-        Settings.autoPilotToggleKey.OnValueChanged += () => { Input.RegisterKey(Settings.autoPilotToggleKey.Value); };
+        Input.RegisterKey(Settings.AutoPilot.ToggleKey.Value);
+        Settings.AutoPilot.ToggleKey.OnValueChanged += () => { Input.RegisterKey(Settings.AutoPilot.ToggleKey.Value); };
 
         lineOfSight = new LineOfSight(GameController);
 
@@ -74,9 +74,9 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
 
             try
             {
-                if (Settings.autoPilotEnabled && Settings.autoPilotGrace && buffs != null && buffs.Exists(x => x.Name == "grace_period"))
+                if (Settings.AutoPilot.Enabled && Settings.AutoPilot.RemoveGracePeriod && buffs != null && buffs.Exists(x => x.Name == "grace_period"))
                 {
-                    Keyboard.KeyPress(Settings.autoPilotMoveKey);
+                    Keyboard.KeyPress(Settings.AutoPilot.MoveKey);
                 }
                 autoPilot.Render();
 

@@ -98,9 +98,9 @@ public static class Mouse
     public static IEnumerator SetCursorPosAndLeftClickHuman(Vector2 coords, int extraDelay)
     {
         SetCursorPos(coords);
-        yield return new WaitTime(AreWeThereYet.Instance.Settings.autoPilotInputFrequency + extraDelay);
+        yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency + extraDelay);
         LeftMouseDown();
-        yield return new WaitTime(AreWeThereYet.Instance.Settings.autoPilotInputFrequency + extraDelay);
+        yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency + extraDelay);
         LeftMouseUp();
         yield return new WaitTime(100);
     }
