@@ -401,13 +401,13 @@ namespace AreWeThereYet.Utils
                     // Enhanced color mapping based on passability
                     color = value switch
                     {
-                        0 => new SharpDX.Color(255, 100, 50, 200),   // Red - Impassable
-                        1 => new SharpDX.Color(100, 255, 100, 180),  // LIGHT GREEN - Basic walkable
-                        2 => new SharpDX.Color(255, 255, 0, 180),    // Yellow - Static objects (dashable)
-                        3 => new SharpDX.Color(0, 0, 255, 180),      // BLUE - Reserved
-                        4 => new SharpDX.Color(128, 0, 128, 180),    // PURPLE - Reserved
-                        5 => new SharpDX.Color(0, 200, 0, 160),      // DARK GREEN - Open walkable space
-                        _ => new SharpDX.Color(128, 128, 128, 160)   // Gray - Unknown
+                        0 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile0.Value,
+                        1 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile1.Value,
+                        2 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile2.Value,
+                        3 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile3.Value,
+                        4 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile4.Value,
+                        5 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile5.Value,
+                        _ => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.TileUnknown.Value  // Gray - Unknown = EntityColors.Shadow.Value???
                     };
 
                     // // Enhanced color mapping based on passability 

@@ -74,5 +74,32 @@ public class DebugSettings
         public RangeNode<float> DotSize { get; set; } = new(3.0f, 1.0f, 100.0f);
         public RangeNode<int> DotSegments { get; set; } = new(16, 3, 6);
         public RangeNode<int> RefreshInterval { get; set; } = new(500, 100, 2000);
+
+        public TerrainColor Colors { get; set; } = new();
+
+        [Submenu(CollapsedByDefault = false)]
+        public class TerrainColor
+        {
+            // Red - Impassable
+            public ColorNode Tile0 { get; set; } = new(System.Drawing.Color.FromArgb(200, 255, 100, 50).ToSharpDx());
+            
+            // Light Green - Basic walkable
+            public ColorNode Tile1 { get; set; } = new(System.Drawing.Color.FromArgb(0, 100, 255, 100).ToSharpDx());
+            
+            // Yellow - Static objects (dashable)
+            public ColorNode Tile2 { get; set; } = new(System.Drawing.Color.FromArgb(180, 255, 255, 0).ToSharpDx());
+            
+            // Blue - Reserved
+            public ColorNode Tile3 { get; set; } = new(System.Drawing.Color.FromArgb(0, 0, 0, 255).ToSharpDx());
+            
+            // Purple - Reserved
+            public ColorNode Tile4 { get; set; } = new(System.Drawing.Color.FromArgb(0, 128, 0, 128).ToSharpDx());
+            
+            // Dark Green - Open walkable space
+            public ColorNode Tile5 { get; set; } = new(System.Drawing.Color.FromArgb(160, 0, 200, 0).ToSharpDx());
+            
+            // Gray - Unknown - EntityColors.Shadow.Value ?
+            public ColorNode TileUnknown { get; set; } = new(System.Drawing.Color.FromArgb(160, 128, 128, 128).ToSharpDx());
+        }
     }
 }
