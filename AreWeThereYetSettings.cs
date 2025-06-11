@@ -34,7 +34,7 @@ public class AutoPilotSettings
     public HotkeyNode MoveKey { get; set; } = new(Keys.Q);
     public HotkeyNode ToggleKey { get; set; } = new(Keys.NumPad9);
     
-    public RangeNode<int> RandomClickOffset { get; set; } = new(10, 1, 100);
+    // public RangeNode<int> RandomClickOffset { get; set; } = new(10, 1, 100);  -- not implemented right now
     public RangeNode<int> InputFrequency { get; set; } = new(50, 1, 100);
     public RangeNode<int> KeepWithinDistance { get; set; } = new(200, 10, 1000);
     public RangeNode<int> TransitionDistance { get; set; } = new(500, 100, 5000);
