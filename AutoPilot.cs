@@ -203,25 +203,86 @@ public class AutoPilot
         try
         {
             var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
-            if (leaderPartyElement.ZoneName.Equals(currentZoneName) || (!leaderPartyElement.ZoneName.Equals(currentZoneName) && (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout) || AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel >= 68)
+            var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+            var realLevel = AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel ?? 0;
+            
+            // Enhanced logic: differentiate between leveling zones and endgame content
+            if (isHideout || realLevel >= 68)
             {
-                var portalLabels =
-                    AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
-                            x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible && x.ItemOnGround != null &&
-                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || x.ItemOnGround.Metadata.ToLower().Contains("portal")))
-                        .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos)).ToList();
+                // ENDGAME/HIDEOUT: Any portal is fine (maps, hideout transitions)
+                var portalLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                    .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
+                            x.Label.IsVisible && x.ItemOnGround != null &&
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || 
+                                x.ItemOnGround.Metadata.ToLower().Contains("portal")))
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .ToList();
 
-                return AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout != null && (bool)AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.IsHideout
-                    ? portalLabels?[random.Next(portalLabels.Count)]
-                    : portalLabels?.FirstOrDefault();
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"Endgame/Hideout portal search: Found {portalLabels?.Count ?? 0} portals");
+                }
+
+                return isHideout && portalLabels?.Count > 0
+                    ? portalLabels[random.Next(portalLabels.Count)] // Random portal in hideout
+                    : portalLabels?.FirstOrDefault(); // Closest portal in endgame
             }
-            return null;
+            else
+            {
+                // LEVELING ZONES: Must find portal that leads to leader's specific zone
+                var portalLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                    .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
+                            x.Label.IsVisible && x.ItemOnGround != null &&
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || 
+                                x.ItemOnGround.Metadata.ToLower().Contains("portal")) &&
+                            x.Label.Text.ToLower().Contains(leaderPartyElement.ZoneName.ToLower())) // IMPORTANT KEY IMPROVEMENT: Check portal text
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .ToList();
+
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    var allPortals = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                        .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
+                                x.Label.IsVisible && x.ItemOnGround != null &&
+                                (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || 
+                                    x.ItemOnGround.Metadata.ToLower().Contains("portal")))
+                        .ToList();
+
+                    AreWeThereYet.Instance.LogMessage($"Leveling zone portal search:");
+                    AreWeThereYet.Instance.LogMessage($"  - Leader zone: '{leaderPartyElement.ZoneName}'");
+                    AreWeThereYet.Instance.LogMessage($"  - All portals: {allPortals?.Count ?? 0}");
+                    AreWeThereYet.Instance.LogMessage($"  - Matching portals: {portalLabels?.Count ?? 0}");
+                    
+                    if (allPortals != null)
+                    {
+                        foreach (var portal in allPortals)
+                        {
+                            var matches = portal.Label.Text.Contains(leaderPartyElement.ZoneName);
+                            AreWeThereYet.Instance.LogMessage($"    Portal: '{portal.Label.Text}' -> {(matches ? "MATCH" : "No match")}");
+                        }
+                    }
+                }
+
+                // EXPLICIT NULL CHECK: If no matching portals found in leveling zone, return null for teleport fallback
+                if (portalLabels == null || portalLabels.Count == 0)
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"No matching portal found for leader zone '{leaderPartyElement.ZoneName}' - will use teleport button fallback");
+                    }
+                    return null; // Force teleport button usage
+                }
+
+                return portalLabels.FirstOrDefault(); // Return closest matching portal
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            AreWeThereYet.Instance.LogError($"GetBestPortalLabel failed: {ex.Message}");
+            return null; // Exception fallback
         }
     }
+
 
     private Vector2 GetTpButton(PartyElementWindow leaderPartyElement)
     {
