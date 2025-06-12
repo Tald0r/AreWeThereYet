@@ -339,26 +339,37 @@ public class AutoPilot
     
     private bool ShouldUseDash(Vector2 targetPosition)
     {
-        if (LineOfSight == null)
-            return false;
+        try
+        {
+            // Add comprehensive null checks like CoPilot
+            if (LineOfSight == null || 
+                AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
+                AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
+                return false;
 
-        var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
-        var distance = Vector2.Distance(playerPos, targetPosition);
-        
-        // Don't dash for very short or very long distances
-        if (distance < 30 || distance > 150)
-            return false;
-        
-        // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
-        var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
-        var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
+            var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
+            var distance = Vector2.Distance(playerPos, targetPosition);
+            
+            // Don't dash for very short or very long distances
+            if (distance < 30 || distance > 150)
+                return false;
+            
+            // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
+            var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
+            var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
 
-        // Use line of sight to determine if there's an obstacle to dash through
-        var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
-        
-        // Dash when there's NO line of sight (obstacles in the way)
-        // but the distance is reasonable for dashing
-        return !hasLineOfSight && distance >= 50;
+            // This is where exceptions were crashing your coroutine
+            var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
+            
+            // Dash when there's NO line of sight (obstacles in the way)
+            return !hasLineOfSight && distance >= 50;
+        }
+        catch (Exception ex)
+        {
+            // Log the error but DON'T let it bubble up to crash the coroutine
+            AreWeThereYet.Instance.LogError($"ShouldUseDash failed: {ex.Message}");
+            return false; // Safe fallback - don't dash if terrain check fails
+        }
     }
 
     private Entity GetFollowingTarget()
