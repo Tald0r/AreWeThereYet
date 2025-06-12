@@ -19,7 +19,7 @@ public class AutoPilot
 {
     private Coroutine autoPilotCoroutine;
     private readonly Random random = new Random();
-        
+
     private Vector3 lastTargetPosition;
     private Vector3 lastPlayerPosition;
     private Entity followTarget;
@@ -41,7 +41,7 @@ public class AutoPilot
         followTarget = null;
         lastTargetPosition = Vector3.Zero;
         lastPlayerPosition = Vector3.Zero;
-        
+
         // Reset pathfinding state
         _currentPath = null;
         _currentPathIndex = 0;
@@ -51,7 +51,7 @@ public class AutoPilot
     public void AreaChange()
     {
         ResetPathing();
-        
+
         // Initialize pathfinder for new area
         try
         {
@@ -76,10 +76,10 @@ public class AutoPilot
     {
         var timeSinceUpdate = DateTime.Now - _lastPathUpdate;
         var pathUpdateInterval = TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.PathUpdateInterval.Value);
-        var leaderMoved = Vector3.Distance(lastTargetPosition, leaderPosition) > 
+        var leaderMoved = Vector3.Distance(lastTargetPosition, leaderPosition) >
                          AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 0.5f;
         var pathCompleted = _currentPath == null || _currentPathIndex >= _currentPath.Count;
-        
+
         return timeSinceUpdate > pathUpdateInterval || leaderMoved || pathCompleted;
     }
 
@@ -96,21 +96,21 @@ public class AutoPilot
 
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos.Truncate();
             var leaderGridPos = leaderPosition.WorldToGridInt();
-            
+
             // Update pathfinder's walkable grid
             _pathfinder.UpdateWalkableGrid();
-            
+
             // Find path using enhanced pathfinding
             _currentPath = _pathfinder.FindPath(playerPos, leaderGridPos);
             _currentPathIndex = 0;
             _lastPathUpdate = DateTime.Now;
             lastTargetPosition = leaderPosition;
-            
+
             if (_currentPath != null && _currentPath.Count > 0)
             {
                 // Convert path to task system
                 ConvertPathToTasks(_currentPath);
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"Generated path with {_currentPath.Count} waypoints");
@@ -120,7 +120,7 @@ public class AutoPilot
             {
                 // Pathfinding failed, use fallback
                 CreateSimpleTask(leaderPosition);
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage("Pathfinding failed, using direct movement");
@@ -144,12 +144,12 @@ public class AutoPilot
     private void ConvertPathToTasks(List<Vector2i> path)
     {
         tasks.Clear();
-        
+
         // Skip first few nodes that are too close
         var startIndex = 0;
         var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos.Truncate();
         var skipDistance = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.WaypointSkipDistance.Value;
-        
+
         for (var i = 0; i < path.Count; i++)
         {
             if (playerPos.Distance(path[i]) > skipDistance)
@@ -158,16 +158,16 @@ public class AutoPilot
                 break;
             }
         }
-        
+
         // Create tasks from path, combining nearby waypoints for efficiency
         var maxPathLength = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.MaxPathLength.Value;
         var step = Math.Max(1, path.Count / maxPathLength);
-        
+
         for (var i = startIndex; i < path.Count; i += step)
         {
             var gridPos = path[i];
             var worldPos = gridPos.GridToWorld();
-                
+
             tasks.Add(new TaskNode(worldPos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
         }
     }
@@ -203,12 +203,12 @@ public class AutoPilot
         try
         {
             var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
-            if(leaderPartyElement.ZoneName.Equals(currentZoneName) || (!leaderPartyElement.ZoneName.Equals(currentZoneName) && (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout) || AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel >= 68)
+            if (leaderPartyElement.ZoneName.Equals(currentZoneName) || (!leaderPartyElement.ZoneName.Equals(currentZoneName) && (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout) || AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel >= 68)
             {
                 var portalLabels =
                     AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
-                            x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible && x.ItemOnGround != null && 
-                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || x.ItemOnGround.Metadata.ToLower().Contains("portal") ))
+                            x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible && x.ItemOnGround != null &&
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || x.ItemOnGround.Metadata.ToLower().Contains("portal")))
                         .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos)).ToList();
 
                 return AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout != null && (bool)AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.IsHideout
@@ -228,9 +228,9 @@ public class AutoPilot
         try
         {
             var windowOffset = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle().TopLeft;
-            var elemCenter = (Vector2) leaderPartyElement?.TpButton?.GetClientRectCache.Center;
+            var elemCenter = (Vector2)leaderPartyElement?.TpButton?.GetClientRectCache.Center;
             var finalPos = new Vector2(elemCenter.X + windowOffset.X, elemCenter.Y + windowOffset.Y);
-				
+
             return finalPos;
         }
         catch
@@ -267,7 +267,7 @@ public class AutoPilot
                 clickPos.Value.X + random.Next(-15, 15),
                 clickPos.Value.Y + random.Next(-10, 10)));
         }
-	        
+
         yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency));
     }
 
@@ -275,21 +275,25 @@ public class AutoPilot
     {
         while (true)
         {
-            if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive || 
+            if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive ||
                 !AreWeThereYet.Instance.GameController.IsForeGroundCache || MenuWindow.IsOpened || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             {
                 yield return new WaitTime(100);
                 continue;
             }
-		        
+
             followTarget = GetFollowingTarget();
             var leaderPartyElement = GetLeaderPartyElement();
 
-            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName)) {
+            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
+            {
                 var portal = GetBestPortalLabel(leaderPartyElement);
-                if (portal != null) {
+                if (portal != null)
+                {
                     tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
-                } else {
+                }
+                else
+                {
                     var tpConfirmation = GetTpConfirmation();
                     if (tpConfirmation != null)
                     {
@@ -299,9 +303,9 @@ public class AutoPilot
                         yield return Mouse.LeftClick();
                         yield return new WaitTime(1000);
                     }
-						
+
                     var tpButton = GetTpButton(leaderPartyElement);
-                    if(!tpButton.Equals(Vector2.Zero))
+                    if (!tpButton.Equals(Vector2.Zero))
                     {
                         yield return Mouse.SetCursorPosHuman(tpButton, false);
                         yield return new WaitTime(200);
@@ -309,9 +313,11 @@ public class AutoPilot
                         yield return new WaitTime(200);
                     }
                 }
-            } else if (followTarget != null) {
+            }
+            else if (followTarget != null)
+            {
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-                
+
                 // Enhanced pathfinding logic
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
@@ -347,7 +353,7 @@ public class AutoPilot
                         tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
                         tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
                 }
-                
+
                 if (followTarget?.Pos != null)
                     lastTargetPosition = followTarget.Pos;
             }
@@ -358,7 +364,7 @@ public class AutoPilot
                 var taskDistance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition);
                 var playerDistanceMoved = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastPlayerPosition);
 
-                if (currentTask.Type == TaskNodeType.Transition && 
+                if (currentTask.Type == TaskNodeType.Transition &&
                     playerDistanceMoved >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     tasks.RemoveAt(0);
@@ -392,102 +398,102 @@ public class AutoPilot
                         yield return null;
                         continue;
                     case TaskNodeType.Loot:
-                    {
-                        currentTask.AttemptCount++;
-                        var questLoot = GetQuestItem();
-                        if (questLoot == null
-                            || currentTask.AttemptCount > 2
-                            || Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) >=
-                            AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                         {
-                            tasks.RemoveAt(0);
-                            yield return null;
-                        }
-
-                        Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                        yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
-                        if (questLoot != null)
-                        {
-                            var targetInfo = questLoot.GetComponent<Targetable>();
-                            switch (targetInfo.isTargeted)
+                            currentTask.AttemptCount++;
+                            var questLoot = GetQuestItem();
+                            if (questLoot == null
+                                || currentTask.AttemptCount > 2
+                                || Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) >=
+                                AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                             {
-                                case false:
-                                    yield return MouseoverItem(questLoot);
-                                    break;
-                                case true:
-                                    yield return Mouse.LeftClick();
-                                    yield return new WaitTime(1000);
-                                    break;
+                                tasks.RemoveAt(0);
+                                yield return null;
+                            }
+
+                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
+                            if (questLoot != null)
+                            {
+                                var targetInfo = questLoot.GetComponent<Targetable>();
+                                switch (targetInfo.isTargeted)
+                                {
+                                    case false:
+                                        yield return MouseoverItem(questLoot);
+                                        break;
+                                    case true:
+                                        yield return Mouse.LeftClick();
+                                        yield return new WaitTime(1000);
+                                        break;
+                                }
+                            }
+
+                            break;
+                        }
+                    case TaskNodeType.Transition:
+                        {
+                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            yield return new WaitTime(60);
+                            yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
+                            yield return new WaitTime(300);
+
+                            currentTask.AttemptCount++;
+                            if (currentTask.AttemptCount > 6)
+                                tasks.RemoveAt(0);
+                            {
+                                yield return null;
+                                continue;
                             }
                         }
 
-                        break;
-                    }
-                    case TaskNodeType.Transition:
-                    {
-                        Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                        yield return new WaitTime(60);
-                        yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
-                        yield return new WaitTime(300);
-
-                        currentTask.AttemptCount++;
-                        if (currentTask.AttemptCount > 6)
-                            tasks.RemoveAt(0);
-                        {
-                            yield return null;
-                            continue;
-                        }
-                    }
-
                     case TaskNodeType.ClaimWaypoint:
-                    {
-                        if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition) > 150)
                         {
-                            var screenPos = Helper.WorldToValidScreenPosition(currentTask.WorldPosition);
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                            yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
-                            yield return Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
-                            yield return new WaitTime(1000);
+                            if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition) > 150)
+                            {
+                                var screenPos = Helper.WorldToValidScreenPosition(currentTask.WorldPosition);
+                                Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                                yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
+                                yield return Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
+                                yield return new WaitTime(1000);
+                            }
+                            currentTask.AttemptCount++;
+                            if (currentTask.AttemptCount > 3)
+                                tasks.RemoveAt(0);
+                            {
+                                yield return null;
+                                continue;
+                            }
                         }
-                        currentTask.AttemptCount++;
-                        if (currentTask.AttemptCount > 3)
-                            tasks.RemoveAt(0);
-                        {
-                            yield return null;
-                            continue;
-                        }
-                    }
                 }
             }
             lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
             yield return new WaitTime(50);
         }
     }
-    
+
     private bool ShouldUseDash(Vector2 targetPosition)
     {
         try
         {
             // Add comprehensive null checks like CoPilot
-            if (LineOfSight == null || 
+            if (LineOfSight == null ||
                 AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
                 AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
                 return false;
 
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
             var distance = Vector2.Distance(playerPos, targetPosition);
-            
+
             // Don't dash for very short or very long distances
             if (distance < 30 || distance > 150)
                 return false;
-            
+
             // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
             var playerPosNumerics = playerPos.ToNumerics();
             var targetPosNumerics = targetPosition.ToNumerics();
 
             // This is where exceptions were crashing your coroutine
             var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
-            
+
             // Dash when there's NO line of sight (obstacles in the way)
             return !hasLineOfSight && distance >= 50;
         }
@@ -530,15 +536,19 @@ public class AutoPilot
             return null;
         }
     }
-		
+
     public void Render()
     {
+
+        var statusBackgroundColor = AreWeThereYet.Instance.Settings.Debug.TextBackgroundColor;
+        var statusPadding = AreWeThereYet.Instance.Settings.Debug.TextBackgroundPadding;
+
         if (AreWeThereYet.Instance.Settings.AutoPilot.ToggleKey.PressedOnce())
         {
             AreWeThereYet.Instance.Settings.AutoPilot.Enabled.SetValueNoEvent(!AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value);
-            tasks = new List<TaskNode>();				
+            tasks = new List<TaskNode>();
         }
-			
+
         if (!AreWeThereYet.Instance.Settings.AutoPilot.Enabled || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             return;
 
@@ -553,7 +563,7 @@ public class AutoPilot
 
             foreach (var portal in portalLabels)
             {
-                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f,Color.Firebrick);
+                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f, Color.Firebrick);
             }
         }
         catch (Exception)
@@ -561,12 +571,12 @@ public class AutoPilot
         }
 
         // Enhanced pathfinding visualization
-        if (AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.ShowPathVisualization?.Value == true && 
+        if (AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.ShowPathVisualization?.Value == true &&
             _currentPath != null && _currentPath.Count > 0)
         {
             RenderPathVisualization();
         }
-			
+
         try
         {
             var taskCount = 0;
@@ -601,12 +611,19 @@ public class AutoPilot
             if (AreWeThereYet.Instance.localPlayer != null)
             {
                 var targetDist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastTargetPosition);
-                AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Follow Enabled: {AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value}", new System.Numerics.Vector2(500, 120));
-                AreWeThereYet.Instance.Graphics.DrawText(
+                DrawTextWithBackground(
+                    $"Follow Enabled: {AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value}",
+                    new System.Numerics.Vector2(500, 120),
+                    SharpDX.Color.White,
+                    statusBackgroundColor,
+                    statusPadding);
+                DrawTextWithBackground(
                     $"Task Count: {taskCount:D} Next WP Distance: {dist:F} Target Distance: {targetDist:F}",
-                    new System.Numerics.Vector2(500, 140));
-					
+                    new System.Numerics.Vector2(500, 140),
+                    SharpDX.Color.White,
+                    statusBackgroundColor,
+                    statusPadding);
+
             }
         }
         catch (Exception)
@@ -616,10 +633,24 @@ public class AutoPilot
         // Enhanced debug information
         RenderDebugInfo();
 
-        AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
-        AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
-        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ "+ AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " +(followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
-        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490,210), 1, Color.White);
+        DrawTextWithBackground(
+            "AutoPilot: Active",
+            new System.Numerics.Vector2(350, 120),
+            SharpDX.Color.LightGreen,
+            statusBackgroundColor,
+            statusPadding);
+        DrawTextWithBackground(
+            "Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"),
+            new System.Numerics.Vector2(350, 140),
+            autoPilotCoroutine.Running ? SharpDX.Color.LightGreen : SharpDX.Color.LightCoral,
+            statusBackgroundColor,
+            statusPadding);
+        DrawTextWithBackground(
+            "Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"),
+            new System.Numerics.Vector2(500, 160),
+            followTarget != null ? SharpDX.Color.LightGreen : SharpDX.Color.Yellow,
+            statusBackgroundColor,
+            statusPadding);
     }
 
     private void RenderPathVisualization()
@@ -629,12 +660,12 @@ public class AutoPilot
             var lineColor = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.PathVisualizationColor.Value;
             var lineWidth = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.PathVisualizationLineWidth.Value;
             const float GridToWorldMultiplier = 250f / 23f;
-            
+
             for (var i = _currentPathIndex; i < _currentPath.Count - 1; i++)
             {
                 var currentNode = _currentPath[i];
                 var nextNode = _currentPath[i + 1];
-                
+
                 var currentWorld = new Vector3(
                     currentNode.X * GridToWorldMultiplier,
                     currentNode.Y * GridToWorldMultiplier,
@@ -643,13 +674,13 @@ public class AutoPilot
                     nextNode.X * GridToWorldMultiplier,
                     nextNode.Y * GridToWorldMultiplier,
                     0);
-                
+
                 var currentScreen = Helper.WorldToValidScreenPosition(currentWorld);
                 var nextScreen = Helper.WorldToValidScreenPosition(nextWorld);
-                
+
                 AreWeThereYet.Instance.Graphics.DrawLine(currentScreen, nextScreen, lineWidth, lineColor);
             }
-            
+
             // Draw current waypoint
             if (_currentPathIndex < _currentPath.Count)
             {
@@ -659,9 +690,9 @@ public class AutoPilot
                     currentWaypoint.Y * GridToWorldMultiplier,
                     0);
                 var waypointScreen = Helper.WorldToValidScreenPosition(waypointWorld);
-                
-                AreWeThereYet.Instance.Graphics.DrawCircleFilled(waypointScreen.ToNumerics(), 
-                    AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.WaypointSize.Value, 
+
+                AreWeThereYet.Instance.Graphics.DrawCircleFilled(waypointScreen.ToNumerics(),
+                    AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.WaypointSize.Value,
                     AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.WaypointColor.Value, 16);
             }
         }
@@ -678,40 +709,67 @@ public class AutoPilot
             var baseY = 300;
             var lineHeight = 20;
             var currentLine = 0;
+            var backgroundColor = AreWeThereYet.Instance.Settings.Debug.TextBackgroundColor;
+            var textColor = SharpDX.Color.White;
+            var padding = AreWeThereYet.Instance.Settings.Debug.TextBackgroundPadding;
             
-            AreWeThereYet.Instance.Graphics.DrawText(
-                $"Pathfinder: {(_pathfinder != null ? "Active" : "Inactive")}",
-                new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight),
-                SharpDX.Color.White);
+            // Pathfinder status
+            var text1 = $"Pathfinder: {(_pathfinder != null ? "Active" : "Inactive")}";
+            var pos1 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
+            DrawTextWithBackground(text1, pos1, textColor, backgroundColor, padding);
             
             if (_currentPath != null)
             {
-                AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Path Length: {_currentPath.Count} | Current Index: {_currentPathIndex}",
-                    new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight),
-                    SharpDX.Color.White);
+                // Path info
+                var text2 = $"Path Length: {_currentPath.Count} | Current Index: {_currentPathIndex}";
+                var pos2 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
+                DrawTextWithBackground(text2, pos2, textColor, backgroundColor, padding);
                     
                 var timeSinceUpdate = DateTime.Now - _lastPathUpdate;
-                AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Last Path Update: {timeSinceUpdate.TotalSeconds:F1}s ago",
-                    new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight),
-                    SharpDX.Color.White);
+                var text3 = $"Last Path Update: {timeSinceUpdate.TotalSeconds:F1}s ago";
+                var pos3 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
+                DrawTextWithBackground(text3, pos3, textColor, backgroundColor, padding);
             }
 
             // Show pathfinding stats
             if (AreWeThereYet.Instance.Settings.Debug.ShowPathfindingStats?.Value == true && _pathfinder != null)
             {
                 var stats = _pathfinder.GetStats();
-                AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Cache: {stats.CacheHitRate} | Distance Fields: {stats.ExactDistanceFields} | Direction Fields: {stats.DirectionFields}",
-                    new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight),
-                    SharpDX.Color.White);
+                var text4 = $"Cache: {stats.CacheHitRate} | Distance Fields: {stats.ExactDistanceFields} | Direction Fields: {stats.DirectionFields}";
+                var pos4 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
+                DrawTextWithBackground(text4, pos4, textColor, backgroundColor, padding);
                     
-                AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Avg Pathfinding Time: {stats.AveragePathfindingTime:F2}ms",
-                    new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight),
-                    SharpDX.Color.White);
+                var text5 = $"Avg Pathfinding Time: {stats.AveragePathfindingTime:F2}ms";
+                var pos5 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
+                DrawTextWithBackground(text5, pos5, textColor, backgroundColor, padding);
             }
         }
+    }
+    
+    /// <summary>
+    /// Helper method for AutoPilot debug text with background
+    /// </summary>
+    private void DrawTextWithBackground(string text, System.Numerics.Vector2 position, SharpDX.Color textColor, SharpDX.Color backgroundColor, int padding)
+    {
+        // Convert System.Numerics.Vector2 to Vector2 for rectangle
+        var pos = new Vector2(position.X, position.Y);
+        
+        // Estimate text size
+        var textWidth = text.Length * 7;
+        var textHeight = 16;
+        
+        // Draw background rectangle
+        var backgroundRect = new RectangleF(
+            pos.X - padding, 
+            pos.Y - padding, 
+            textWidth + (padding * 2), 
+            textHeight + (padding * 2)
+        );
+        
+        AreWeThereYet.Instance.Graphics.DrawBox(backgroundRect, backgroundColor);
+        AreWeThereYet.Instance.Graphics.DrawFrame(backgroundRect, new SharpDX.Color(255, 255, 255, 100), 1);
+        
+        // Draw text
+        AreWeThereYet.Instance.Graphics.DrawText(text, position, textColor);
     }
 }

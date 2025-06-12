@@ -70,6 +70,10 @@ public class DebugSettings
     public ToggleNode ShowTerrainDebug { get; set; } = new(false);
     public ToggleNode ShowDetailedDebug { get; set; } = new(false);
     public ToggleNode ShowPathfindingStats { get; set; } = new(false);
+
+    public ToggleNode ShowTextBackgrounds { get; set; } = new(true);
+    public ColorNode TextBackgroundColor { get; set; } = new(System.Drawing.Color.FromArgb(180, 0, 0, 0).ToSharpDx());
+    public RangeNode<int> TextBackgroundPadding { get; set; } = new(5, 2, 15);
     
     public RaycastSettings Raycast { get; set; } = new();
     public TerrainSettings Terrain { get; set; } = new();

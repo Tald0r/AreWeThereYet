@@ -488,37 +488,37 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Debug information rendering
+        /// Debug information rendering with backgrounds
         /// </summary> 
         private void RenderDebugInfo(RenderEvent evt)
         {
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
                 var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
+
+                // Background color for debug text
+                var backgroundColor = AreWeThereYet.Instance.Settings.Debug.TextBackgroundColor;
+                var textColor = SharpDX.Color.White;
+                var padding = AreWeThereYet.Instance.Settings.Debug.TextBackgroundPadding;
                 
-                evt.Graphics.DrawText(
-                    $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
-                    new Vector2(10, 200),
-                    SharpDX.Color.White
-                );
+                // First debug line
+                var text1 = $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}";
+                var pos1 = new SharpDX.Vector2(10, 200);
+                Helper.DrawTextWithBackground(evt, text1, pos1, textColor, backgroundColor, padding);
                 
-                evt.Graphics.DrawText(
-                    $"Terrain Data: {_terrainData?.Length ?? 0} rows (LayerMelee + LayerRanged)",
-                    new Vector2(10, 220),
-                    SharpDX.Color.White
-                );
+                // Second debug line
+                var text2 = $"Terrain Data: {_terrainData?.Length ?? 0} rows (LayerMelee + LayerRanged)";
+                var pos2 = new SharpDX.Vector2(10, 220);
+                Helper.DrawTextWithBackground(evt, text2, pos2, textColor, backgroundColor, padding);
 
                 // Cursor ray debug info
                 if (AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true && _cursorRays.Count > 0)
                 {
                     var cursorRayStatus = _cursorRays[0].IsVisible ? "CLEAR" : "BLOCKED";
-                    var cursorRayColor = _cursorRays[0].IsVisible ? SharpDX.Color.Green : SharpDX.Color.Red;
-                    
-                    evt.Graphics.DrawText(
-                        $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1})",
-                        new Vector2(10, 240),
-                        cursorRayColor
-                    );
+                    var cursorTextColor = _cursorRays[0].IsVisible ? SharpDX.Color.LightGreen : SharpDX.Color.LightCoral;
+                    var text3 = $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1})";
+                    var pos3 = new SharpDX.Vector2(10, 240);
+                    Helper.DrawTextWithBackground(evt, text3, pos3, cursorTextColor, backgroundColor, padding);
                 }
             }
         }
