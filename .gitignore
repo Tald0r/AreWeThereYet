@@ -218,4 +218,5 @@ project.lock.json
 #####
 Errors.txt
 
-*.txt
+*-output*.txt
+*-output*.md
