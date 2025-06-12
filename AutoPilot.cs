@@ -611,13 +611,13 @@ public class AutoPilot
             if (AreWeThereYet.Instance.localPlayer != null)
             {
                 var targetDist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastTargetPosition);
-                DrawTextWithBackground(
+                Helper.DrawTextWithBackground(
                     $"Follow Enabled: {AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value}",
                     new System.Numerics.Vector2(500, 120),
                     SharpDX.Color.White,
                     statusBackgroundColor,
                     statusPadding);
-                DrawTextWithBackground(
+                Helper.DrawTextWithBackground(
                     $"Task Count: {taskCount:D} Next WP Distance: {dist:F} Target Distance: {targetDist:F}",
                     new System.Numerics.Vector2(500, 140),
                     SharpDX.Color.White,
@@ -633,19 +633,19 @@ public class AutoPilot
         // Enhanced debug information
         RenderDebugInfo();
 
-        DrawTextWithBackground(
+        Helper.DrawTextWithBackground(
             "AutoPilot: Active",
             new System.Numerics.Vector2(350, 120),
             SharpDX.Color.LightGreen,
             statusBackgroundColor,
             statusPadding);
-        DrawTextWithBackground(
+        Helper.DrawTextWithBackground(
             "Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"),
             new System.Numerics.Vector2(350, 140),
             autoPilotCoroutine.Running ? SharpDX.Color.LightGreen : SharpDX.Color.LightCoral,
             statusBackgroundColor,
             statusPadding);
-        DrawTextWithBackground(
+        Helper.DrawTextWithBackground(
             "Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"),
             new System.Numerics.Vector2(500, 160),
             followTarget != null ? SharpDX.Color.LightGreen : SharpDX.Color.Yellow,
@@ -716,19 +716,19 @@ public class AutoPilot
             // Pathfinder status
             var text1 = $"Pathfinder: {(_pathfinder != null ? "Active" : "Inactive")}";
             var pos1 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
-            DrawTextWithBackground(text1, pos1, textColor, backgroundColor, padding);
+            Helper.DrawTextWithBackground(text1, pos1, textColor, backgroundColor, padding);
             
             if (_currentPath != null)
             {
                 // Path info
                 var text2 = $"Path Length: {_currentPath.Count} | Current Index: {_currentPathIndex}";
                 var pos2 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
-                DrawTextWithBackground(text2, pos2, textColor, backgroundColor, padding);
+                Helper.DrawTextWithBackground(text2, pos2, textColor, backgroundColor, padding);
                     
                 var timeSinceUpdate = DateTime.Now - _lastPathUpdate;
                 var text3 = $"Last Path Update: {timeSinceUpdate.TotalSeconds:F1}s ago";
                 var pos3 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
-                DrawTextWithBackground(text3, pos3, textColor, backgroundColor, padding);
+                Helper.DrawTextWithBackground(text3, pos3, textColor, backgroundColor, padding);
             }
 
             // Show pathfinding stats
@@ -737,39 +737,12 @@ public class AutoPilot
                 var stats = _pathfinder.GetStats();
                 var text4 = $"Cache: {stats.CacheHitRate} | Distance Fields: {stats.ExactDistanceFields} | Direction Fields: {stats.DirectionFields}";
                 var pos4 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
-                DrawTextWithBackground(text4, pos4, textColor, backgroundColor, padding);
+                Helper.DrawTextWithBackground(text4, pos4, textColor, backgroundColor, padding);
                     
                 var text5 = $"Avg Pathfinding Time: {stats.AveragePathfindingTime:F2}ms";
                 var pos5 = new System.Numerics.Vector2(10, baseY + currentLine++ * lineHeight);
-                DrawTextWithBackground(text5, pos5, textColor, backgroundColor, padding);
+                Helper.DrawTextWithBackground(text5, pos5, textColor, backgroundColor, padding);
             }
         }
-    }
-    
-    /// <summary>
-    /// Helper method for AutoPilot debug text with background
-    /// </summary>
-    private void DrawTextWithBackground(string text, System.Numerics.Vector2 position, SharpDX.Color textColor, SharpDX.Color backgroundColor, int padding)
-    {
-        // Convert System.Numerics.Vector2 to Vector2 for rectangle
-        var pos = new Vector2(position.X, position.Y);
-        
-        // Estimate text size
-        var textWidth = text.Length * 7;
-        var textHeight = 16;
-        
-        // Draw background rectangle
-        var backgroundRect = new RectangleF(
-            pos.X - padding, 
-            pos.Y - padding, 
-            textWidth + (padding * 2), 
-            textHeight + (padding * 2)
-        );
-        
-        AreWeThereYet.Instance.Graphics.DrawBox(backgroundRect, backgroundColor);
-        AreWeThereYet.Instance.Graphics.DrawFrame(backgroundRect, new SharpDX.Color(255, 255, 255, 100), 1);
-        
-        // Draw text
-        AreWeThereYet.Instance.Graphics.DrawText(text, position, textColor);
     }
 }

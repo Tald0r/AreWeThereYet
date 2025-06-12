@@ -36,7 +36,7 @@ public static class Helper
     }
 
     /// <summary>
-    /// Helper method to draw text with background rectangle
+    /// Helper method to draw text with background rectangle (with RenderEvent)
     /// </summary>
     internal static void DrawTextWithBackground(RenderEvent evt, string text, Vector2 position, SharpDX.Color textColor, SharpDX.Color backgroundColor, int padding)
     {
@@ -59,5 +59,32 @@ public static class Helper
 
         // Draw text on top
         evt.Graphics.DrawText(text, position, textColor, FontAlign.Left);
+    }
+
+    /// <summary>
+    /// Helper method to draw text with background rectangle (direct Graphics access for AutoPilot)
+    /// </summary>
+    internal static void DrawTextWithBackground(string text, System.Numerics.Vector2 position, SharpDX.Color textColor, SharpDX.Color backgroundColor, int padding)
+    {
+        // Convert System.Numerics.Vector2 to Vector2 for rectangle
+        var pos = new Vector2(position.X, position.Y);
+        
+        // Estimate text size
+        var textWidth = text.Length * 7;
+        var textHeight = 16;
+        
+        // Draw background rectangle
+        var backgroundRect = new RectangleF(
+            pos.X - padding, 
+            pos.Y - padding, 
+            textWidth + (padding * 2), 
+            textHeight + (padding * 2)
+        );
+        
+        AreWeThereYet.Instance.Graphics.DrawBox(backgroundRect, backgroundColor);
+        AreWeThereYet.Instance.Graphics.DrawFrame(backgroundRect, new SharpDX.Color(255, 255, 255, 100), 1);
+        
+        // Draw text
+        AreWeThereYet.Instance.Graphics.DrawText(text, position, textColor);
     }
 }
