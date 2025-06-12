@@ -568,6 +568,21 @@ public class AutoPilot
                         }
                     case TaskNodeType.Transition:
                         {
+                            // Re-validate portal exists and is still valid before attempting to use it
+                            if (currentTask.LabelOnGround?.Label?.IsValid != true || 
+                                currentTask.LabelOnGround?.IsVisible != true ||
+                                currentTask.LabelOnGround?.ItemOnGround == null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    AreWeThereYet.Instance.LogMessage("Portal became invalid - removing transition task, will re-evaluate in main loop");
+                                }
+                                
+                                tasks.RemoveAt(0);
+                                yield return null;
+                                continue;
+                            }
+
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(60);
                             yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
@@ -582,24 +597,6 @@ public class AutoPilot
                             }
                         }
 
-                    case TaskNodeType.ClaimWaypoint:
-                        {
-                            if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition) > 150)
-                            {
-                                var screenPos = Helper.WorldToValidScreenPosition(currentTask.WorldPosition);
-                                Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                                yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
-                                yield return Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
-                                yield return new WaitTime(1000);
-                            }
-                            currentTask.AttemptCount++;
-                            if (currentTask.AttemptCount > 3)
-                                tasks.RemoveAt(0);
-                            {
-                                yield return null;
-                                continue;
-                            }
-                        }
                 }
             }
             lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
