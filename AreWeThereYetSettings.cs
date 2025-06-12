@@ -38,6 +38,9 @@ public class AutoPilotSettings
     public RangeNode<int> KeepWithinDistance { get; set; } = new(200, 10, 1000);
     public RangeNode<int> TransitionDistance { get; set; } = new(500, 100, 5000);
 
+    [Menu("Zone Update Buffer (ms)")]
+    public RangeNode<int> ZoneUpdateBuffer { get; set; } = new(2000, 500, 5000);
+
     public VisualSettings Visual { get; set; } = new();
     public PathfindingSettings Pathfinding { get; set; } = new();
 
@@ -100,24 +103,31 @@ public class DebugSettings
         public class TerrainColor
         {
             // Red - Impassable
+            [Menu("Tile0 - Impassable")]
             public ColorNode Tile0 { get; set; } = new(System.Drawing.Color.FromArgb(200, 255, 100, 50).ToSharpDx());
-            
+
             // Light Green - Basic walkable
+            [Menu("Tile1 - Basic walkable")]
             public ColorNode Tile1 { get; set; } = new(System.Drawing.Color.FromArgb(0, 100, 255, 100).ToSharpDx());
-            
+
             // Yellow - Static objects (dashable)
+            [Menu("Tile2 - Static objects (dashable)")]
             public ColorNode Tile2 { get; set; } = new(System.Drawing.Color.FromArgb(180, 255, 255, 0).ToSharpDx());
-            
+
             // Blue - Reserved
+            [Menu("Tile3 - Reserved")]
             public ColorNode Tile3 { get; set; } = new(System.Drawing.Color.FromArgb(0, 0, 0, 255).ToSharpDx());
-            
+
             // Purple - Reserved
+            [Menu("Tile4 - Reserved")]
             public ColorNode Tile4 { get; set; } = new(System.Drawing.Color.FromArgb(0, 128, 0, 128).ToSharpDx());
-            
+
             // Dark Green - Open walkable space
+            [Menu("Tile5 - Open walkable space")]
             public ColorNode Tile5 { get; set; } = new(System.Drawing.Color.FromArgb(160, 0, 200, 0).ToSharpDx());
-            
+
             // Gray - Unknown
+            [Menu("TileUnknown - Unknown")]
             public ColorNode TileUnknown { get; set; } = new(System.Drawing.Color.FromArgb(160, 128, 128, 128).ToSharpDx());
         }
     }
