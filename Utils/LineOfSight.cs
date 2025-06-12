@@ -528,7 +528,7 @@ namespace AreWeThereYet.Utils
             return x >= 0 && x < _areaDimensions.X && y >= 0 && y < _areaDimensions.Y;
         }
 
-        private int GetTerrainValue(Vector2 position)
+        public int GetTerrainValue(Vector2 position)
         {
             var x = (int)position.X;
             var y = (int)position.Y;

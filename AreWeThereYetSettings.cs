@@ -34,18 +34,32 @@ public class AutoPilotSettings
     public HotkeyNode MoveKey { get; set; } = new(Keys.Q);
     public HotkeyNode ToggleKey { get; set; } = new(Keys.NumPad9);
     
-    // public RangeNode<int> RandomClickOffset { get; set; } = new(10, 1, 100);  -- not implemented right now
     public RangeNode<int> InputFrequency { get; set; } = new(50, 1, 100);
     public RangeNode<int> KeepWithinDistance { get; set; } = new(200, 10, 1000);
     public RangeNode<int> TransitionDistance { get; set; } = new(500, 100, 5000);
 
     public VisualSettings Visual { get; set; } = new();
+    public PathfindingSettings Pathfinding { get; set; } = new();
 
     [Submenu(CollapsedByDefault = true)]
     public class VisualSettings
     {
         public RangeNode<int> TaskLineWidth { get; set; } = new(3, 0, 10);
         public ColorNode TaskLineColor { get; set; } = new(System.Drawing.Color.Green.ToSharpDx());
+    }
+
+    [Submenu(CollapsedByDefault = true)]
+    public class PathfindingSettings
+    {
+        public ToggleNode EnableAdvancedPathfinding { get; set; } = new(true);
+        public RangeNode<int> MaxPathLength { get; set; } = new(100, 10, 500);
+        public RangeNode<int> PathUpdateInterval { get; set; } = new(1000, 500, 5000);
+        public RangeNode<int> WaypointSkipDistance { get; set; } = new(3, 1, 10);
+        public ToggleNode ShowPathVisualization { get; set; } = new(false);
+        public RangeNode<float> PathVisualizationLineWidth { get; set; } = new(3.0f, 1.0f, 10.0f);
+        public ColorNode PathVisualizationColor { get; set; } = new(System.Drawing.Color.Cyan.ToSharpDx());
+        public ColorNode WaypointColor { get; set; } = new(System.Drawing.Color.Yellow.ToSharpDx());
+        public RangeNode<float> WaypointSize { get; set; } = new(8.0f, 4.0f, 20.0f);
     }
 }
 
@@ -55,6 +69,7 @@ public class DebugSettings
     public ToggleNode EnableRendering { get; set; } = new(true);
     public ToggleNode ShowTerrainDebug { get; set; } = new(false);
     public ToggleNode ShowDetailedDebug { get; set; } = new(false);
+    public ToggleNode ShowPathfindingStats { get; set; } = new(false);
     
     public RaycastSettings Raycast { get; set; } = new();
     public TerrainSettings Terrain { get; set; } = new();
@@ -98,7 +113,7 @@ public class DebugSettings
             // Dark Green - Open walkable space
             public ColorNode Tile5 { get; set; } = new(System.Drawing.Color.FromArgb(160, 0, 200, 0).ToSharpDx());
             
-            // Gray - Unknown - EntityColors.Shadow.Value ?
+            // Gray - Unknown
             public ColorNode TileUnknown { get; set; } = new(System.Drawing.Color.FromArgb(160, 128, 128, 128).ToSharpDx());
         }
     }
