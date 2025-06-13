@@ -270,7 +270,7 @@ namespace AreWeThereYet.Utils
                 {
                     y += stepY;
                     var pos = new Vector2(x, y);
-                    if (!IsTileWalkable(pos)) return false;
+                    if (!IsPassableForProjectilesAndSight(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
                 return true;
@@ -283,7 +283,7 @@ namespace AreWeThereYet.Utils
                 {
                     x += stepX;
                     var pos = new Vector2(x, y);
-                    if (!IsTileWalkable(pos)) return false;
+                    if (!IsPassableForProjectilesAndSight(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
                 return true;
@@ -308,7 +308,7 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    if (!IsTileWalkable(pos)) return false;
+                    if (!IsPassableForProjectilesAndSight(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
             }
@@ -328,7 +328,7 @@ namespace AreWeThereYet.Utils
                     }
 
                     var pos = new Vector2(x, y);
-                    if (!IsTileWalkable(pos)) return false;
+                    if (!IsPassableForProjectilesAndSight(pos)) return false;
                     _debugVisiblePoints.Add(pos);
                 }
             }
@@ -338,18 +338,14 @@ namespace AreWeThereYet.Utils
 
         /// <summary>
         /// The universal, single source of truth for determining if a grid tile is passable.
-        /// This check accounts for terrain type and player settings like Dash.
         /// </summary>
         /// <param name="pos">The grid position to check.</param>
         /// <returns>True if the tile is passable, false otherwise.</returns>
-        public bool IsTileWalkable(Vector2 pos)
+        public bool IsPassableForProjectilesAndSight(Vector2 pos)
         {
             if (_terrainData == null) return false;
 
             var terrainValue = GetTerrainValue(pos);
-            
-            // Always get the most current setting value
-            var isDashEnabled = AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true;
 
             switch (terrainValue)
             {
@@ -357,8 +353,8 @@ namespace AreWeThereYet.Utils
                     return false;
 
                 case 2:  // Static objects (doors, chests, etc.) - dashable
-                    // This tile is only walkable if dashing is enabled.
-                    return isDashEnabled;
+                         // For line-of-sight and projectiles, these tiles ARE passable.
+                    return true;
 
                 case 1:  // Basic walkable terrain
                 case 5:  // Open walkable space

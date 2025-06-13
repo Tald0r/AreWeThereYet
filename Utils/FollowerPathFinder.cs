@@ -50,7 +50,7 @@ namespace AreWeThereYet.Utils
             return NeighborOffsets.Select(offset => tile + offset);
         }
 
-        private bool IsTileWalkable(Vector2i tile)
+        private bool IsValidPathingTile(Vector2i tile)
         {
             // This now queries the raw terrain value directly from LineOfSight.
             var terrainValue = _lineOfSight.GetTerrainValue(new System.Numerics.Vector2(tile.X, tile.Y));
@@ -156,7 +156,7 @@ namespace AreWeThereYet.Utils
             
             foreach (var index in checkPoints)
             {
-                if (index < cachedPath.Count && !IsTileWalkable(cachedPath[index]))
+                if (index < cachedPath.Count && !IsValidPathingTile(cachedPath[index]))
                 {
                     // Path is invalid, recalculate
                     return GenerateNewPath(start, target);
@@ -201,7 +201,7 @@ namespace AreWeThereYet.Utils
             while (current != target && path.Count < maxSteps)
             {
                 var bestNeighbor = GetNeighbors(current)
-                    .Where(IsTileWalkable)
+                    .Where(IsValidPathingTile)
                     .MinBy(neighbor => exactDistances.GetValueOrDefault(neighbor, float.PositiveInfinity));
 
                 if (bestNeighbor.Equals(default(Vector2i)) || 
@@ -217,7 +217,7 @@ namespace AreWeThereYet.Utils
 
         private List<Vector2i> GenerateNewPath(Vector2i start, Vector2i target)
         {
-            if (!IsTileWalkable(start) || !IsTileWalkable(target))
+            if (!IsValidPathingTile(start) || !IsValidPathingTile(target))
                 return null;
 
             // Run Dijkstra's algorithm from target (like Radar does)
@@ -245,7 +245,7 @@ namespace AreWeThereYet.Utils
 
                         // Find the neighbor that is closest to the target
                         var bestNeighbor = GetNeighbors(currentPos)
-                            .Where(IsTileWalkable)
+                            .Where(IsValidPathingTile)
                             .MinBy(neighbor => exactDistances.GetValueOrDefault(neighbor, float.PositiveInfinity));
 
                         if (bestNeighbor.Equals(default(Vector2i)))
@@ -309,7 +309,7 @@ namespace AreWeThereYet.Utils
 
                 foreach (var neighbor in GetNeighbors(currentPos))
                 {
-                    if (!IsTileWalkable(neighbor) || visited.Contains(neighbor))
+                    if (!IsValidPathingTile(neighbor) || visited.Contains(neighbor))
                         continue;
 
                     // Get a variable cost instead of a fixed one.
