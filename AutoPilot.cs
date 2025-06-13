@@ -35,6 +35,8 @@ public class AutoPilot
 
     private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
+    private const int WaypointArrivalDistance = 25; // We've "arrived" when we are this close to a waypoint.
+
     private string _lastKnownLeaderZone = "";
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
 
@@ -132,6 +134,42 @@ public class AutoPilot
         return simplifiedPath;
     }
 
+    private List<Vector2i> BreakUpLongSegments(List<Vector2i> path, int maxSegmentLength = 150)
+    {
+        if (path == null || path.Count < 2)
+        {
+            return path;
+        }
+
+        var newPath = new List<Vector2i>();
+        newPath.Add(path[0]);
+
+        for (int i = 0; i < path.Count - 1; i++)
+        {
+            var start = path[i];
+            var end = path[i + 1];
+            var distance = start.DistanceF(end);
+
+            if (distance > maxSegmentLength)
+            {
+                int numSegments = (int)Math.Ceiling(distance / maxSegmentLength);
+                for (int j = 1; j <= numSegments; j++)
+                {
+                    float t = (float)j / numSegments;
+                    int x = (int)(start.X + t * (end.X - start.X));
+                    int y = (int)(start.Y + t * (end.Y - start.Y));
+                    newPath.Add(new Vector2i(x, y));
+                }
+            }
+            else
+            {
+                newPath.Add(end);
+            }
+        }
+        return newPath;
+    }
+
+
     private void UpdatePathToLeader(Vector3 leaderPosition)
     {
         try
@@ -154,10 +192,13 @@ public class AutoPilot
 
             if (_currentPath != null && _currentPath.Count > 0)
             {
-                // Simplify the raw path before converting it to tasks.
-                var simplifiedPath = SimplifyPath(_currentPath);
+                // 1. Break up any impractically long straight lines from the raw path.
+                var navigablePath = BreakUpLongSegments(_currentPath);
 
-                // Convert the *simplified* path to the task system
+                // 2. Simplify the now-navigable path to remove unnecessary corners.
+                var simplifiedPath = SimplifyPath(navigablePath);
+
+                // 3. Convert the final, optimized path to the task system.
                 ConvertPathToTasks(simplifiedPath);
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -500,7 +541,7 @@ public class AutoPilot
 
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
 
-                // Enhanced pathfinding logic
+                // STATE 1: We are far away. We must generate a path.
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     if (ShouldUpdatePath(followTarget.Pos))
@@ -508,32 +549,26 @@ public class AutoPilot
                         UpdatePathToLeader(followTarget.Pos);
                     }
                 }
+                // STATE 2: We are very close. Stop all movement and clear any existing path.
                 else if (distanceToLeader <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 0.8f)
                 {
-                    // Clear path when close enough
                     _currentPath = null;
                     tasks.Clear();
                 }
-                else
+                // STATE 3: We are in the "medium zone" AND have no path. Create a simple path if CloseFollow is on.
+                else if (tasks.Count == 0 && AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
                 {
-                    if (tasks.Count > 0)
-                    {
-                        for (var i = tasks.Count - 1; i >= 0; i--)
-                            if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
-                                tasks.RemoveAt(i);
-                        yield return null;
-                    }
-                    if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
-                    {
-                        if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
+                    tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                }
+                // If none of the above are true, it means we are in the medium zone and HAVE a path, so we do nothing and let it execute.
 
-                    var questLoot = GetQuestItem();
-                    if (questLoot != null &&
-                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
-                        tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+                // Quest item logic is handled independently.
+                var questLoot = GetQuestItem();
+                if (questLoot != null &&
+                    Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                    tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                {
+                    tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
                 }
 
                 if (followTarget?.Pos != null)
@@ -587,7 +622,7 @@ public class AutoPilot
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         }
 
-                        if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
+                        if (taskDistance <= WaypointArrivalDistance)
                             tasks.RemoveAt(0);
                         yield return null;
                         yield return null;
