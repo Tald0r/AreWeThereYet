@@ -358,7 +358,7 @@ namespace AreWeThereYet.Utils
 
                 case 2:  // Static objects (doors, chests, etc.) - dashable
                     // This tile is only walkable if dashing is enabled.
-                    return isDashEnabled;
+                    return false;
 
                 case 1:  // Basic walkable terrain
                 case 5:  // Open walkable space

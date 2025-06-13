@@ -146,9 +146,6 @@ public class AutoPilot
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos.Truncate();
             var leaderGridPos = leaderPosition.WorldToGridInt();
 
-            // Update pathfinder's walkable grid
-            _pathfinder.UpdateWalkableGrid();
-
             // Find path using enhanced pathfinding
             _currentPath = _pathfinder.FindPath(playerPos, leaderGridPos);
             _currentPathIndex = 0;
@@ -560,8 +557,21 @@ public class AutoPilot
                 switch (currentTask.Type)
                 {
                     case TaskNodeType.Movement:
-                        if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled &&
-                        ShouldUseDash(currentTask.WorldPosition.WorldToGrid()))
+                        bool useDash = false;
+                        if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true)
+                        {
+                            if (AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.EnableAdvancedPathfinding?.Value == true)
+                            {
+                                // Advanced pathing is on, so the path itself tells us when to dash.
+                                useDash = ShouldUseDash_Advanced(currentTask.WorldPosition);
+                            }
+                            else
+                            {
+                                // Advanced pathing is off, use the simple line-of-sight-based dash check.
+                                useDash = ShouldUseDash_Simple(currentTask.WorldPosition.WorldToGrid());
+                            }
+                        }
+                        if (useDash)
                         {
                             yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
                             yield return new WaitTime(random.Next(25) + 30);
@@ -652,11 +662,31 @@ public class AutoPilot
         }
     }
 
-    private bool ShouldUseDash(Vector2 targetPosition)
+    // The NEW method, renamed for clarity
+    private bool ShouldUseDash_Advanced(Vector3 nextWaypointWorldPosition)
     {
         try
         {
-            // Add comprehensive null checks like CoPilot
+            if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value != true)
+                return false;
+
+            var targetGridPos = nextWaypointWorldPosition.WorldToGridInt();
+            var targetGridPosNumerics = new System.Numerics.Vector2(targetGridPos.X, targetGridPos.Y);
+            var terrainValue = LineOfSight.GetTerrainValue(targetGridPosNumerics);
+            return terrainValue == 2;
+        }
+        catch (Exception ex)
+        {
+            PluginLog.Log($"ShouldUseDash (Advanced) failed: {ex.Message}", LogLevel.Error);
+            return false;
+        }
+    }
+
+    // The OLD method, kept as a fallback and renamed
+    private bool ShouldUseDash_Simple(Vector2 targetPosition)
+    {
+        try
+        {
             if (LineOfSight == null ||
                 AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
                 AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
@@ -682,7 +712,7 @@ public class AutoPilot
         catch (Exception ex)
         {
             // Log the error but DON'T let it bubble up to crash the coroutine
-            PluginLog.Log($"ShouldUseDash failed: {ex.Message}", LogLevel.Error);
+            PluginLog.Log($"ShouldUseDash (Simple) failed: {ex.Message}", LogLevel.Error);
             return false; // Safe fallback - don't dash if terrain check fails
         }
     }

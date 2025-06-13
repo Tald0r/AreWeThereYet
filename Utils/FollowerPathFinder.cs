@@ -9,7 +9,6 @@ namespace AreWeThereYet.Utils
 {
     public class FollowerPathFinder
     {
-        private bool[][] _walkableGrid;
         private readonly ConcurrentDictionary<Vector2i, Dictionary<Vector2i, float>> _exactDistanceField = new();
         private readonly ConcurrentDictionary<Vector2i, byte[][]> _directionField = new();
         private readonly Vector2i _gridDimensions;
@@ -20,6 +19,11 @@ namespace AreWeThereYet.Utils
         private int _pathfindingCalls = 0;
         private double _totalPathfindingTime = 0;
         private DateTime _lastPerformanceReport = DateTime.Now;
+
+        // Costs as constants for easy tuning
+        private const float WALK_COST = 1.0f;
+        private const float DIAGONAL_WALK_COST = 1.414f;
+        private const float DASH_COST = 30.0f; // High cost makes it a last resort
 
         // Direction offsets for 8-directional movement
         private static readonly List<Vector2i> NeighborOffsets = new()
@@ -38,59 +42,7 @@ namespace AreWeThereYet.Utils
         {
             _lineOfSight = lineOfSight;
             _gridDimensions = gridDimensions;
-            _walkableGrid = GenerateWalkableGrid();
             _pathCache = new PathCache(150, TimeSpan.FromMinutes(3));
-        }
-
-        private bool[][] GenerateWalkableGrid()
-        {
-            var grid = new bool[_gridDimensions.Y][];
-            for (var y = 0; y < _gridDimensions.Y; y++)
-            {
-                grid[y] = new bool[_gridDimensions.X];
-                for (var x = 0; x < _gridDimensions.X; x++)
-                {
-                    // Call the universal function from LineOfSight
-                    grid[y][x] = _lineOfSight.IsTileWalkable(new Vector2(x, y));
-                }
-            }
-            return grid;
-        }
-
-        public void UpdateWalkableGrid()
-        {
-            var hasChanges = false;
-            for (var y = 0; y < _gridDimensions.Y; y++)
-            {
-                for (var x = 0; x < _gridDimensions.X; x++)
-                {
-                    // Call the universal function from LineOfSight
-                    var newWalkable = _lineOfSight.IsTileWalkable(new Vector2(x, y));
-                    
-                    if (_walkableGrid[y][x] != newWalkable)
-                    {
-                        _walkableGrid[y][x] = newWalkable;
-                        hasChanges = true;
-                    }
-                }
-            }
-            
-            if (hasChanges)
-            {
-                // Clear caches only if terrain actually changed
-                _exactDistanceField.Clear();
-                _directionField.Clear();
-                _pathCache.Clear();
-            }
-        }
-
-        private bool IsTileWalkable(Vector2i tile)
-        {
-            if (tile.X < 0 || tile.X >= _gridDimensions.X ||
-                tile.Y < 0 || tile.Y >= _gridDimensions.Y)
-                return false;
-
-            return _walkableGrid[tile.Y][tile.X];
         }
 
         private static IEnumerable<Vector2i> GetNeighbors(Vector2i tile)
@@ -98,18 +50,46 @@ namespace AreWeThereYet.Utils
             return NeighborOffsets.Select(offset => tile + offset);
         }
 
-        private static float GetMovementCost(Vector2i from, Vector2i to)
+        private bool IsTileWalkable(Vector2i tile)
         {
-            var dx = Math.Abs(to.X - from.X);
-            var dy = Math.Abs(to.Y - from.Y);
-            // Diagonal movement costs √2, orthogonal costs 1
-            return (dx == 1 && dy == 1) ? 1.414f : 1.0f;
+            // This now queries the raw terrain value directly from LineOfSight.
+            var terrainValue = _lineOfSight.GetTerrainValue(new System.Numerics.Vector2(tile.X, tile.Y));
+            
+            // A tile is considered "walkable" for pathfinding if it's not a solid wall (0) or out of bounds (-1).
+            // The cost of walking on it is handled by GetMovementCost.
+            return terrainValue != 0 && terrainValue != -1;
         }
+
+        private float GetMovementCost(Vector2i from, Vector2i to)
+        {
+            // This is the core of the new logic. It assigns a cost based on the terrain type.
+            var terrainValue = _lineOfSight.GetTerrainValue(new System.Numerics.Vector2(to.X, to.Y));
+
+            switch (terrainValue)
+            {
+                case 5: // Open walkable space
+                case 1: // Basic walkable terrain
+                    var dx = Math.Abs(to.X - from.X);
+                    var dy = Math.Abs(to.Y - from.Y);
+                    // Return standard cost for walking, with a penalty for diagonals.
+                    return (dx == 1 && dy == 1) ? DIAGONAL_WALK_COST : WALK_COST;
+
+                case 2: // Dashable objects (yellow tiles)
+                        // Return the high dash cost, but only if dashing is enabled. Otherwise, it's impassable.
+                    return AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true
+                        ? DASH_COST
+                        : float.PositiveInfinity;
+
+                default: // Includes impassable walls (0) and any other unknown tile values.
+                    return float.PositiveInfinity;
+            }
+        }
+
 
         public List<Vector2i> FindPath(Vector2i start, Vector2i target)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            
+
             try
             {
                 // Check cache first
@@ -159,7 +139,7 @@ namespace AreWeThereYet.Utils
                 stopwatch.Stop();
                 _pathfindingCalls++;
                 _totalPathfindingTime += stopwatch.Elapsed.TotalMilliseconds;
-                
+
                 // Report performance every 30 seconds
                 if ((DateTime.Now - _lastPerformanceReport).TotalSeconds > 30)
                 {
@@ -332,8 +312,12 @@ namespace AreWeThereYet.Utils
                     if (!IsTileWalkable(neighbor) || visited.Contains(neighbor))
                         continue;
 
+                    // Get a variable cost instead of a fixed one.
                     var newDistance = currentDistance + GetMovementCost(currentPos, neighbor);
                     
+                    if (newDistance >= float.PositiveInfinity) // Don't consider impassable paths
+                        continue;
+
                     if (!distances.ContainsKey(neighbor) || newDistance < distances[neighbor])
                     {
                         distances[neighbor] = newDistance;
