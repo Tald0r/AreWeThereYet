@@ -50,37 +50,22 @@ namespace AreWeThereYet.Utils
                 grid[y] = new bool[_gridDimensions.X];
                 for (var x = 0; x < _gridDimensions.X; x++)
                 {
-                    var terrainValue = GetTerrainValueFromLineOfSight(x, y);
-                    // Terrain values: 0=blocked, 2=dashable, 5=walkable
-                    grid[y][x] = terrainValue >= 2;
+                    // Call the universal function from LineOfSight
+                    grid[y][x] = _lineOfSight.IsTileWalkable(new Vector2(x, y));
                 }
             }
             return grid;
         }
 
-        private int GetTerrainValueFromLineOfSight(int x, int y)
-        {
-            try
-            {
-                var pos = new Vector2(x, y);
-                return _lineOfSight?.GetTerrainValue(pos) ?? 5;
-            }
-            catch
-            {
-                return 0; // Assume blocked if error
-            }
-        }
-
         public void UpdateWalkableGrid()
         {
             var hasChanges = false;
-            
             for (var y = 0; y < _gridDimensions.Y; y++)
             {
                 for (var x = 0; x < _gridDimensions.X; x++)
                 {
-                    var terrainValue = GetTerrainValueFromLineOfSight(x, y);
-                    var newWalkable = terrainValue >= 2;
+                    // Call the universal function from LineOfSight
+                    var newWalkable = _lineOfSight.IsTileWalkable(new Vector2(x, y));
                     
                     if (_walkableGrid[y][x] != newWalkable)
                     {
