@@ -358,7 +358,7 @@ namespace AreWeThereYet.Utils
 
                 case 2:  // Static objects (doors, chests, etc.) - dashable
                     // This tile is only walkable if dashing is enabled.
-                    return false;
+                    return isDashEnabled;
 
                 case 1:  // Basic walkable terrain
                 case 5:  // Open walkable space
@@ -375,6 +375,69 @@ namespace AreWeThereYet.Utils
             }
         }
 
+        /// <summary>
+        /// Checks for a direct, unobstructed WALKING path between two points.
+        /// It only considers tiles with terrain value 1 or 5 as walkable.
+        /// This is the correct method for SimplifyPath to use.
+        /// </summary>
+        public bool HasClearWalkablePath(System.Numerics.Vector2 start, System.Numerics.Vector2 end)
+        {
+            var startX = (int)start.X;
+            var startY = (int)start.Y;
+            var endX = (int)end.X;
+            var endY = (int)end.Y;
+
+            if (!IsInBounds(startX, startY) || !IsInBounds(endX, endY))
+                return false;
+
+            var dx = Math.Abs(endX - startX);
+            var dy = Math.Abs(endY - startY);
+
+            var x = startX;
+            var y = startY;
+            var stepX = startX < endX ? 1 : -1;
+            var stepY = startY < endY ? 1 : -1;
+
+            // Use DDA algorithm to trace a line between the points
+            if (dx > dy)
+            {
+                var err = dx / 2.0f;
+                while (x != endX)
+                {
+                    var terrainValue = GetTerrainValue(new System.Numerics.Vector2(x, y));
+                    if (terrainValue != 1 && terrainValue != 5) return false; // Not a walkable tile
+
+                    err -= dy;
+                    if (err < 0)
+                    {
+                        y += stepY;
+                        err += dx;
+                    }
+                    x += stepX;
+                }
+            }
+            else
+            {
+                var err = dy / 2.0f;
+                while (y != endY)
+                {
+                    var terrainValue = GetTerrainValue(new System.Numerics.Vector2(x, y));
+                    if (terrainValue != 1 && terrainValue != 5) return false; // Not a walkable tile
+
+                    err -= dx;
+                    if (err < 0)
+                    {
+                        x += stepX;
+                        err += dy;
+                    }
+                    y += stepY;
+                }
+            }
+
+            // Final check on the destination tile
+            var endTerrainValue = GetTerrainValue(new System.Numerics.Vector2(endX, endY));
+            return endTerrainValue == 1 || endTerrainValue == 5;
+        }
 
         private void UpdateDebugGrid(Vector2 center)
         {

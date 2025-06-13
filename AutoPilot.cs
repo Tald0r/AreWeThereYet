@@ -117,9 +117,9 @@ public class AutoPilot
                 var anchorPos = new System.Numerics.Vector2(path[anchorIndex].X, path[anchorIndex].Y);
                 var lookaheadPos = new System.Numerics.Vector2(path[lookaheadIndex].X, path[lookaheadIndex].Y);
 
-                if (LineOfSight.HasLineOfSight(anchorPos, lookaheadPos))
+                if (LineOfSight.HasClearWalkablePath(anchorPos, lookaheadPos))
                 {
-                    // We can see this point from our anchor, so we can skip all the points in between.
+                    // We can walk to this point from our anchor, so we can skip all the points in between.
                     break;
                 }
                 lookaheadIndex--;
