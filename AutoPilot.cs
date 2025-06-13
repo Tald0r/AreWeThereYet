@@ -27,12 +27,28 @@ public class AutoPilot
 
     private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
+    private string _lastKnownLeaderZone = "";
+    private DateTime _leaderZoneChangeTime = DateTime.MinValue;
+
     private void ResetPathing()
     {
         tasks = new List<TaskNode>();
         followTarget = null;
         lastTargetPosition = Vector3.Zero;
         lastPlayerPosition = Vector3.Zero;
+    }
+
+
+    public void AreaChange()
+    {
+        ResetPathing();
+            
+    }
+
+    public void StartCoroutine()
+    {
+        autoPilotCoroutine = new Coroutine(AutoPilotLogic(), AreWeThereYet.Instance, "AutoPilot");
+        Core.ParallelRunner.Run(autoPilotCoroutine);
     }
 
     private PartyElementWindow GetLeaderPartyElement()
@@ -53,29 +69,114 @@ public class AutoPilot
             return null;
         }
     }
+    
+    private bool IsLeaderZoneInfoReliable(PartyElementWindow leaderPartyElement)
+    {
+        try
+        {
+            // Check if zone name looks valid (not empty, not obviously stale)
+            var zoneName = leaderPartyElement.ZoneName;
+            var currentZone = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
+            
+            // Invalid if empty or same as current zone when leader should be elsewhere
+            if (string.IsNullOrEmpty(zoneName) || zoneName.Equals(currentZone))
+                return false;
+                
+            // Check if zone name changed very recently (might still be updating)
+            var timeSinceChange = DateTime.Now - _leaderZoneChangeTime;
+            if (timeSinceChange < TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.ZoneUpdateBuffer.Value))
+                return false;
+                
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private LabelOnGround GetBestPortalLabel(PartyElementWindow leaderPartyElement)
     {
         try
         {
             var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
-            if(leaderPartyElement.ZoneName.Equals(currentZoneName) || (!leaderPartyElement.ZoneName.Equals(currentZoneName) && (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout) || AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel >= 68)
-            {
-                var portalLabels =
-                    AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
-                            x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible && x.ItemOnGround != null && 
-                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") || x.ItemOnGround.Metadata.ToLower().Contains("portal") ))
-                        .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos)).ToList();
+            var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+            var realLevel = AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel ?? 0;
 
-                return AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout != null && (bool)AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.IsHideout
-                    ? portalLabels?[random.Next(portalLabels.Count)]
-                    : portalLabels?.FirstOrDefault();
+            // Enhanced logic: differentiate between leveling zones and endgame content
+            if (isHideout || realLevel >= 68)
+            {
+                // ENDGAME/HIDEOUT: Any portal is fine (maps, hideout transitions)
+                var portalLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                    .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid &&
+                            x.Label.IsVisible && x.ItemOnGround != null &&
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
+                                x.ItemOnGround.Metadata.ToLower().Contains("portal")))
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .ToList();
+
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"Endgame/Hideout portal search: Found {portalLabels?.Count ?? 0} portals");
+                }
+
+                return isHideout && portalLabels?.Count > 0
+                    ? portalLabels[random.Next(portalLabels.Count)] // Random portal in hideout
+                    : portalLabels?.FirstOrDefault(); // Closest portal in endgame
             }
-            return null;
+            else
+            {
+                // LEVELING ZONES: Must find portal that leads to leader's specific zone
+                var portalLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                    .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid &&
+                            x.Label.IsVisible && x.ItemOnGround != null &&
+                            (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
+                                x.ItemOnGround.Metadata.ToLower().Contains("portal")) &&
+                            x.Label.Text.ToLower().Contains(leaderPartyElement.ZoneName.ToLower())) // IMPORTANT KEY IMPROVEMENT: Check portal text
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .ToList();
+
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    var allPortals = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                        .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid &&
+                                x.Label.IsVisible && x.ItemOnGround != null &&
+                                (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
+                                    x.ItemOnGround.Metadata.ToLower().Contains("portal")))
+                        .ToList();
+
+                    AreWeThereYet.Instance.LogMessage($"Leveling zone portal search:");
+                    AreWeThereYet.Instance.LogMessage($"  - Leader zone: '{leaderPartyElement.ZoneName}'");
+                    AreWeThereYet.Instance.LogMessage($"  - All portals: {allPortals?.Count ?? 0}");
+                    AreWeThereYet.Instance.LogMessage($"  - Matching portals: {portalLabels?.Count ?? 0}");
+
+                    if (allPortals != null)
+                    {
+                        foreach (var portal in allPortals)
+                        {
+                            var matches = portal.Label.Text.Contains(leaderPartyElement.ZoneName);
+                            AreWeThereYet.Instance.LogMessage($"    Portal: '{portal.Label.Text}' -> {(matches ? "MATCH" : "No match")}");
+                        }
+                    }
+                }
+
+                // EXPLICIT NULL CHECK: If no matching portals found in leveling zone, return null for teleport fallback
+                if (portalLabels == null || portalLabels.Count == 0)
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"No matching portal found for leader zone '{leaderPartyElement.ZoneName}' - will use teleport button fallback");
+                    }
+                    return null; // Force teleport button usage
+                }
+
+                return portalLabels.FirstOrDefault(); // Return closest matching portal
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            AreWeThereYet.Instance.LogError($"GetBestPortalLabel failed: {ex.Message}");
+            return null; // Exception fallback
         }
     }
 
@@ -112,18 +213,6 @@ public class AutoPilot
         }
     }
 
-    public void AreaChange()
-    {
-        ResetPathing();
-            
-    }
-
-    public void StartCoroutine()
-    {
-        autoPilotCoroutine = new Coroutine(AutoPilotLogic(), AreWeThereYet.Instance, "AutoPilot");
-        Core.ParallelRunner.Run(autoPilotCoroutine);
-    }
-
     private IEnumerator MouseoverItem(Entity item)
     {
         var uiLoot = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(I => I.IsVisible && I.ItemOnGround.Id == item.Id);
@@ -153,31 +242,84 @@ public class AutoPilot
             followTarget = GetFollowingTarget();
             var leaderPartyElement = GetLeaderPartyElement();
 
-            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName)) {
-                var portal = GetBestPortalLabel(leaderPartyElement);
-                if (portal != null) {
-                    tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
-                } else {
-                    var tpConfirmation = GetTpConfirmation();
-                    if (tpConfirmation != null)
+                        if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
+            {
+                // Track zone changes for buffer timing
+                if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
+                {
+                    // Leader zone changed - start buffer timer
+                    _lastKnownLeaderZone = leaderPartyElement.ZoneName;
+                    _leaderZoneChangeTime = DateTime.Now;
+                    
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
-                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect()
-                            .Center);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
-                        yield return new WaitTime(1000);
-                    }
-						
-                    var tpButton = GetTpButton(leaderPartyElement);
-                    if(!tpButton.Equals(Vector2.Zero))
-                    {
-                        yield return Mouse.SetCursorPosHuman(tpButton, false);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
-                        yield return new WaitTime(200);
+                        AreWeThereYet.Instance.LogMessage($"Leader zone change detected: '{_lastKnownLeaderZone}' - starting reliability check");
                     }
                 }
-            } else if (followTarget != null) {
+
+                // Use smarter zone detection to check if leader zone info is reliable
+                if (IsLeaderZoneInfoReliable(leaderPartyElement))
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"Leader zone info reliable: '{leaderPartyElement.ZoneName}' - proceeding with portal/teleport logic");
+                    }
+
+                    var portal = GetBestPortalLabel(leaderPartyElement);
+                    if (portal != null)
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"Found reliable portal: {portal.ItemOnGround.Metadata}");
+                        }
+                        tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
+                    }
+                    else
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage("No suitable portal found - using teleport button fallback");
+                        }
+
+                        var tpConfirmation = GetTpConfirmation();
+                        if (tpConfirmation != null)
+                        {
+                            yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                            yield return new WaitTime(200);
+                            yield return Mouse.LeftClick();
+                            yield return new WaitTime(1000);
+                        }
+
+                        var tpButton = GetTpButton(leaderPartyElement);
+                        if (!tpButton.Equals(Vector2.Zero))
+                        {
+                            yield return Mouse.SetCursorPosHuman(tpButton, false);
+                            yield return new WaitTime(200);
+                            yield return Mouse.LeftClick();
+                            yield return new WaitTime(200);
+                        }
+                    }
+                }
+                else
+                {
+                    // Leader zone info not reliable yet, wait for it to stabilize
+                    var timeSinceChange = DateTime.Now - _leaderZoneChangeTime;
+                    var bufferTime = TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.ZoneUpdateBuffer?.Value ?? 2000);
+                    
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        var remaining = bufferTime - timeSinceChange;
+                        AreWeThereYet.Instance.LogMessage($"Zone info not reliable yet - waiting {remaining.TotalMilliseconds:F0}ms more (Current: '{leaderPartyElement.ZoneName}')");
+                    }
+                    
+                    yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
+                }
+            }
+            else if (followTarget != null)
+            {
+                // Reset zone tracking when leader is found
+                _lastKnownLeaderZone = "";
+                _leaderZoneChangeTime = DateTime.MinValue;
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
@@ -186,13 +328,13 @@ public class AutoPilot
                     {
                         var transition = GetBestPortalLabel(leaderPartyElement);
                         if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
-                            tasks.Add(new TaskNode(transition,200, TaskNodeType.Transition));
+                            tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
                     }
                     else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
                     {
                         tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
                     }
-							
+
                     else if (tasks.Count > 0)
                     {
                         var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
@@ -298,6 +440,21 @@ public class AutoPilot
                     }
                     case TaskNodeType.Transition:
                     {
+                            // Re-validate portal exists and is still valid before attempting to use it
+                            if (currentTask.LabelOnGround?.Label?.IsValid != true || 
+                                currentTask.LabelOnGround?.IsVisible != true ||
+                                currentTask.LabelOnGround?.ItemOnGround == null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    AreWeThereYet.Instance.LogMessage("Portal became invalid - removing transition task, will re-evaluate in main loop");
+                                }
+                                
+                                tasks.RemoveAt(0);
+                                yield return null;
+                                continue;
+                            }
+                            
                         Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         yield return new WaitTime(60);
                         yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);

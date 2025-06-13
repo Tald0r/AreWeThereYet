@@ -129,7 +129,14 @@ namespace AreWeThereYet.Utils
             {
                 // Use manual memory reading approach for real-time updates
                 var terrain = _gameController.IngameState.Data.Terrain;
-                
+
+                if (terrain.LayerMelee.First == IntPtr.Zero || terrain.LayerRanged.First == IntPtr.Zero)
+                {
+                    // We can't proceed, so we ensure our own terrain data is null and exit.
+                    _terrainData = null;
+                    return;
+                }
+
                 // Read BOTH terrain layers manually (like the original approach)
                 var meleeBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);    // Dynamic walkability (doors)
                 var rangedBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size); // Static ranged line-of-sight
@@ -147,31 +154,31 @@ namespace AreWeThereYet.Utils
 
                 // Initialize combined terrain data
                 _terrainData = new int[numRows][];
-                
+
                 for (var y = 0; y < numRows; y++)
                 {
                     _terrainData[y] = new int[numCols];
                     var dataIndex = y * terrain.BytesPerRow;
-                    
+
                     for (var x = 0; x < numCols; x += 2)
                     {
                         // LAYER 1: Basic terrain (LayerMelee) - dynamic walkability
                         var meleeB = meleeBytes[dataIndex + (x >> 1)];
                         var melee1 = (meleeB & 0xf) > 0 ? 5 : 0;  // 5=walkable, 0=blocked
                         var melee2 = (meleeB >> 4) > 0 ? 5 : 0;
-                        
+
                         // LAYER 2: Static objects (LayerRanged) - dashable objects
                         var rangedB = rangedBytes[dataIndex + (x >> 1)];
                         var ranged1 = (rangedB & 0xf) > 3 ? 2 : 0;  // 2=dashable, 0=blocked
                         var ranged2 = (rangedB >> 4) > 3 ? 2 : 0;
-                        
+
                         // COMBINE LAYERS
                         _terrainData[y][x] = CombineTerrainLayers(melee1, ranged1);
                         if (x + 1 < numCols)
                             _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
                     }
                 }
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"LineOfSight: Manual terrain data - Melee: {meleeBytes.Length} bytes, Ranged: {rangedBytes.Length} bytes, Grid: {numCols}x{numRows}");
@@ -180,6 +187,7 @@ namespace AreWeThereYet.Utils
             catch (Exception ex)
             {
                 AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
+                _terrainData = null; // Invalidate our data on any exception
             }
         }
 
