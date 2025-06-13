@@ -86,6 +86,45 @@ public class AutoPilot
         return timeSinceUpdate > pathUpdateInterval || leaderMoved || pathCompleted;
     }
 
+    /// <summary>
+    /// Simplifies a detailed path by removing unnecessary waypoints using line-of-sight checks.
+    /// </summary>
+    /// <param name="path">The raw, detailed path from the pathfinder.</param>
+    /// <returns>A new list containing only the essential "corner" waypoints.</returns>
+    private List<Vector2i> SimplifyPath(List<Vector2i> path)
+    {
+        if (path == null || path.Count < 3)
+        {
+            return path; // Nothing to simplify
+        }
+
+        var simplifiedPath = new List<Vector2i>();
+        var anchorIndex = 0;
+        simplifiedPath.Add(path[anchorIndex]);
+
+        while (anchorIndex < path.Count - 1)
+        {
+            var lookaheadIndex = path.Count - 1;
+            while (lookaheadIndex > anchorIndex + 1)
+            {
+                var anchorPos = new System.Numerics.Vector2(path[anchorIndex].X, path[anchorIndex].Y);
+                var lookaheadPos = new System.Numerics.Vector2(path[lookaheadIndex].X, path[lookaheadIndex].Y);
+
+                if (LineOfSight.HasLineOfSight(anchorPos, lookaheadPos))
+                {
+                    // We can see this point from our anchor, so we can skip all the points in between.
+                    break;
+                }
+                lookaheadIndex--;
+            }
+
+            simplifiedPath.Add(path[lookaheadIndex]);
+            anchorIndex = lookaheadIndex;
+        }
+
+        return simplifiedPath;
+    }
+
     private void UpdatePathToLeader(Vector3 leaderPosition)
     {
         try
@@ -111,12 +150,16 @@ public class AutoPilot
 
             if (_currentPath != null && _currentPath.Count > 0)
             {
-                // Convert path to task system
-                ConvertPathToTasks(_currentPath);
+                // Simplify the raw path before converting it to tasks.
+                var simplifiedPath = SimplifyPath(_currentPath);
+
+                // Convert the *simplified* path to the task system
+                ConvertPathToTasks(simplifiedPath);
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
-                    AreWeThereYet.Instance.LogMessage($"Generated path with {_currentPath.Count} waypoints");
+                    AreWeThereYet.Instance.LogMessage($"Generated path with {_currentPath.Count} raw waypoints, simplified to {simplifiedPath.Count} tasks.");
+                    //PluginLog.Log($"Generated path with {_currentPath.Count} raw waypoints, simplified to {simplifiedPath.Count} tasks.");
                 }
             }
             else
@@ -144,33 +187,31 @@ public class AutoPilot
         }
     }
 
-    private void ConvertPathToTasks(List<Vector2i> path)
+    private void ConvertPathToTasks(List<Vector2i> simplifiedPath)
     {
         tasks.Clear();
 
-        // Skip first few nodes that are too close
+        if (simplifiedPath == null) return;
+
+        // The skipDistance logic is still useful to avoid moving to a waypoint we're already on.
         var startIndex = 0;
         var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos.Truncate();
         var skipDistance = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.WaypointSkipDistance.Value;
 
-        for (var i = 0; i < path.Count; i++)
+        for (var i = 0; i < simplifiedPath.Count; i++)
         {
-            if (playerPos.Distance(path[i]) > skipDistance)
+            if (playerPos.Distance(simplifiedPath[i]) > skipDistance)
             {
                 startIndex = i;
                 break;
             }
         }
 
-        // Create tasks from path, combining nearby waypoints for efficiency
-        var maxPathLength = AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.MaxPathLength.Value;
-        var step = Math.Max(1, path.Count / maxPathLength);
-
-        for (var i = startIndex; i < path.Count; i += step)
+        // Now, simply add every point from the already simplified path as a task.
+        for (var i = startIndex; i < simplifiedPath.Count; i++)
         {
-            var gridPos = path[i];
+            var gridPos = simplifiedPath[i];
             var worldPos = gridPos.GridToWorld();
-
             tasks.Add(new TaskNode(worldPos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
         }
     }
