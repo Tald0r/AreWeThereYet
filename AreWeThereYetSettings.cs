@@ -55,6 +55,10 @@ public class AutoPilotSettings
     public class PathfindingSettings
     {
         public ToggleNode EnableAdvancedPathfinding { get; set; } = new(true);
+
+        [Menu("Enable Direction Field Generation", "Recommended. Optimizes memory by converting path data into a lightweight direction field. Disabling this may increase RAM usage but removes the initial CPU cost of conversion.")]
+        public ToggleNode GenerateDirectionField { get; set; } = new(true);
+
         public RangeNode<int> MaxPathLength { get; set; } = new(100, 10, 500);
         public RangeNode<int> PathUpdateInterval { get; set; } = new(1000, 500, 5000);
         public RangeNode<int> WaypointSkipDistance { get; set; } = new(3, 1, 10);

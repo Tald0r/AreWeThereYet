@@ -260,9 +260,64 @@ namespace AreWeThereYet.Utils
             if (exactDistances == null || !exactDistances.ContainsKey(start))
                 return null;
 
-            _exactDistanceField[target] = exactDistances;
+            // Check settings to decide whether to generate the direction field
+            if (AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.GenerateDirectionField.Value)
+            {
+                // This logic is adapted from the Radar project to optimize memory.
+                // It converts the large exact distance map into a small, fast direction map.
+                var directionGrid = new byte[_gridDimensions.Y][];
+                for (int y = 0; y < _gridDimensions.Y; y++)
+                {
+                    directionGrid[y] = new byte[_gridDimensions.X];
+                    for (int x = 0; x < _gridDimensions.X; x++)
+                    {
+                        var currentPos = new Vector2i(x, y);
+                        if (!exactDistances.ContainsKey(currentPos))
+                        {
+                            directionGrid[y][x] = 0; // No path from here
+                            continue;
+                        }
 
-            // Use the exact distances to find the path
+                        // Find the neighbor that is closest to the target
+                        var bestNeighbor = GetNeighbors(currentPos)
+                            .Where(IsTileWalkable)
+                            .MinBy(neighbor => exactDistances.GetValueOrDefault(neighbor, float.PositiveInfinity));
+
+                        if (bestNeighbor.Equals(default(Vector2i)))
+                        {
+                            directionGrid[y][x] = 0; // No valid neighbors
+                        }
+                        else
+                        {
+                            // Store the direction to the best neighbor as a byte
+                            var direction = bestNeighbor - currentPos;
+                            var directionIndex = NeighborOffsets.IndexOf(direction);
+                            if (directionIndex != -1)
+                            {
+                                directionGrid[y][x] = (byte)(directionIndex + 1);
+                            }
+                            else
+                            {
+                                directionGrid[y][x] = 0; // Should not happen, but as a safeguard
+                            }
+                        }
+                    }
+                }
+                // Store the generated direction field for future path requests
+                _directionField[target] = directionGrid;
+                
+                // IMPORTANT: Remove the large exact distance field to save memory
+                _exactDistanceField.TryRemove(target, out _);
+            }
+            else
+            {
+                // If the setting is off, just store the exact distances (high memory usage)
+                _exactDistanceField[target] = exactDistances;
+            }
+
+            // Use the exact distances to find the path for the *current* request.
+            // This works whether the setting is on or off because we still have the `exactDistances`
+            // variable available from the initial Dijkstra run.
             return FindPathUsingExactDistances(start, target, exactDistances);
         }
 
