@@ -63,7 +63,7 @@ public class AutoPilot
         }
         catch (Exception ex)
         {
-            AreWeThereYet.Instance.LogError($"Failed to initialize pathfinder: {ex.Message}");
+            PluginLog.Log($"Failed to initialize pathfinder: {ex.Message}", LogLevel.Error);
             _pathfinder = null;
         }
     }
@@ -139,7 +139,7 @@ public class AutoPilot
         }
         catch (Exception ex)
         {
-            AreWeThereYet.Instance.LogError($"Path update failed: {ex.Message}");
+            PluginLog.Log($"Path update failed: {ex.Message}", LogLevel.Error);
             CreateSimpleTask(leaderPosition);
         }
     }
@@ -306,7 +306,7 @@ public class AutoPilot
         }
         catch (Exception ex)
         {
-            AreWeThereYet.Instance.LogError($"GetBestPortalLabel failed: {ex.Message}");
+            PluginLog.Log($"GetBestPortalLabel failed: {ex.Message}", LogLevel.Error);
             return null; // Exception fallback
         }
     }
@@ -634,7 +634,7 @@ public class AutoPilot
         catch (Exception ex)
         {
             // Log the error but DON'T let it bubble up to crash the coroutine
-            AreWeThereYet.Instance.LogError($"ShouldUseDash failed: {ex.Message}");
+            PluginLog.Log($"ShouldUseDash failed: {ex.Message}", LogLevel.Error);
             return false; // Safe fallback - don't dash if terrain check fails
         }
     }
@@ -832,7 +832,7 @@ public class AutoPilot
         }
         catch (Exception ex)
         {
-            AreWeThereYet.Instance.LogError($"Path visualization failed: {ex.Message}");
+            PluginLog.Log($"Path visualization failed: {ex.Message}", LogLevel.Error);
         }
     }
 

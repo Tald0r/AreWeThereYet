@@ -127,16 +127,24 @@ namespace AreWeThereYet.Utils
         {
             try
             {
+
                 // Use manual memory reading approach for real-time updates
                 var terrain = _gameController.IngameState.Data.Terrain;
-                
+
+                if (terrain.LayerMelee.First == IntPtr.Zero || terrain.LayerRanged.First == IntPtr.Zero)
+                {
+                    // We can't proceed, so we ensure our own terrain data is null and exit.
+                    _terrainData = null;
+                    return;
+                }
+
                 // Read BOTH terrain layers manually (like the original approach)
                 var meleeBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);    // Dynamic walkability (doors)
                 var rangedBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size); // Static ranged line-of-sight
 
                 if (meleeBytes == null || rangedBytes == null)
                 {
-                    AreWeThereYet.Instance.LogError("LineOfSight: One or both terrain byte arrays are null");
+                    PluginLog.Log("LineOfSight: One or both terrain byte arrays are null", LogLevel.Error);
                     return;
                 }
 
@@ -147,31 +155,31 @@ namespace AreWeThereYet.Utils
 
                 // Initialize combined terrain data
                 _terrainData = new int[numRows][];
-                
+
                 for (var y = 0; y < numRows; y++)
                 {
                     _terrainData[y] = new int[numCols];
                     var dataIndex = y * terrain.BytesPerRow;
-                    
+
                     for (var x = 0; x < numCols; x += 2)
                     {
                         // LAYER 1: Basic terrain (LayerMelee) - dynamic walkability
                         var meleeB = meleeBytes[dataIndex + (x >> 1)];
                         var melee1 = (meleeB & 0xf) > 0 ? 5 : 0;  // 5=walkable, 0=blocked
                         var melee2 = (meleeB >> 4) > 0 ? 5 : 0;
-                        
+
                         // LAYER 2: Static objects (LayerRanged) - dashable objects
                         var rangedB = rangedBytes[dataIndex + (x >> 1)];
                         var ranged1 = (rangedB & 0xf) > 3 ? 2 : 0;  // 2=dashable, 0=blocked
                         var ranged2 = (rangedB >> 4) > 3 ? 2 : 0;
-                        
+
                         // COMBINE LAYERS
                         _terrainData[y][x] = CombineTerrainLayers(melee1, ranged1);
                         if (x + 1 < numCols)
                             _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
                     }
                 }
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"LineOfSight: Manual terrain data - Melee: {meleeBytes.Length} bytes, Ranged: {rangedBytes.Length} bytes, Grid: {numCols}x{numRows}");
@@ -179,7 +187,8 @@ namespace AreWeThereYet.Utils
             }
             catch (Exception ex)
             {
-                AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
+                PluginLog.Log($"LineOfSight: Failed to update terrain data: {ex.Message}", LogLevel.Error);
+                _terrainData = null; // Invalidate our data on any exception
             }
         }
 
@@ -335,6 +344,8 @@ namespace AreWeThereYet.Utils
         /// <returns>True if the tile is passable, false otherwise.</returns>
         public bool IsTileWalkable(Vector2 pos)
         {
+            if (_terrainData == null) return false;
+
             var terrainValue = GetTerrainValue(pos);
             
             // Always get the most current setting value
@@ -532,7 +543,14 @@ namespace AreWeThereYet.Utils
 
         private bool IsInBounds(int x, int y)
         {
-            return x >= 0 && x < _areaDimensions.X && y >= 0 && y < _areaDimensions.Y;
+            // This is the key fix for the IndexOutOfRangeException.
+            // We check against the actual dimensions of the _terrainData array,
+            // not the potentially mismatched _areaDimensions variable.
+            if (_terrainData == null || y < 0 || y >= _terrainData.Length)
+                return false;
+            
+            var row = _terrainData[y];
+            return row != null && x >= 0 && x < row.Length;
         }
 
         public int GetTerrainValue(Vector2 position)

@@ -63,7 +63,7 @@ public static class PartyElements
         }
         catch (Exception e)
         {
-            AreWeThereYet.Instance.LogError("Character: " + e, 5);
+            PluginLog.Log("Character: " + e, LogLevel.Error);
         }
 
         return playersInParty;

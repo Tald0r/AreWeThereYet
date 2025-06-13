@@ -151,7 +151,7 @@ namespace AreWeThereYet.Utils
             }
             catch (Exception ex)
             {
-                AreWeThereYet.Instance.LogError($"Pathfinding failed: {ex.Message}");
+                PluginLog.Log($"Pathfinding failed: {ex.Message}", LogLevel.Error);
                 return null;
             }
             finally

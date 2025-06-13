@@ -32,6 +32,9 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
     {
         if (Instance == null)
             Instance = this;
+        
+        PluginLog.Initialize(DirectoryFullName);
+        
         GameController.LeftPanel.WantUse(() => Settings.Enable);
         skillCoroutine = new Coroutine(WaitForAreaChange(), this);
         Core.ParallelRunner.Run(skillCoroutine);
