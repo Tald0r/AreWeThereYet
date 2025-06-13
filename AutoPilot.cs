@@ -257,7 +257,12 @@ public class AutoPilot
         {
             var gridPos = simplifiedPath[i];
             var worldPos = gridPos.GridToWorld();
-            tasks.Add(new TaskNode(worldPos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+            
+            // Only add waypoints that are far enough away
+            if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, worldPos) > WaypointArrivalDistance)
+            {
+                tasks.Add(new TaskNode(worldPos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+            }
         }
     }
 
