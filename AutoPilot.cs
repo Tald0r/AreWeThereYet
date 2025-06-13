@@ -55,11 +55,18 @@ public class AutoPilot
     {
         ResetPathing();
 
-        // Initialize pathfinder for new area
+        // Initialize pathfinder for new area if settings are enabled
         try
         {
-            var areaDimensions = AreWeThereYet.Instance.GameController.IngameState.Data.AreaDimensions;
-            _pathfinder = new FollowerPathFinder(LineOfSight, areaDimensions);
+            if (AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.EnableAdvancedPathfinding?.Value == true)
+            {
+                var areaDimensions = AreWeThereYet.Instance.GameController.IngameState.Data.AreaDimensions;
+                _pathfinder = new FollowerPathFinder(LineOfSight, areaDimensions);
+            }
+            else
+            {
+                _pathfinder = null;
+            }
         }
         catch (Exception ex)
         {
@@ -129,7 +136,7 @@ public class AutoPilot
     {
         try
         {
-            if (_pathfinder == null || !AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.EnableAdvancedPathfinding.Value)
+            if (_pathfinder == null || AreWeThereYet.Instance.Settings.AutoPilot.Pathfinding.EnableAdvancedPathfinding?.Value == false)
             {
                 // Fallback to old behavior
                 CreateSimpleTask(leaderPosition);
