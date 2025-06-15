@@ -184,9 +184,14 @@ public class AutoPilot
     {
         try
         {
-            var mercenaryLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+            // Better null checking to prevent the exception
+            if (AreWeThereYet.Instance?.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels == null)
+                return null;
+
+            var mercenaryLabels = AreWeThereYet.Instance.GameController.Game.IngameState.IngameUi.ItemsOnGroundLabels
                 .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
                         x.Label.IsVisible && x.ItemOnGround != null &&
+                        !string.IsNullOrEmpty(x.ItemOnGround.Metadata) &&
                         x.ItemOnGround.Metadata.ToLower().Contains("mercenary") &&
                         x.Label.Children?.Count > 2 && x.Label.Children[2] != null &&
                         x.Label.Children[2].IsVisible)
@@ -212,7 +217,7 @@ public class AutoPilot
                 var optInButton = mercenaryLabel.Label.Children[2];
                 var buttonCenter = optInButton.GetClientRectCache.Center;
                 var finalPos = new Vector2(buttonCenter.X + windowOffset.X, buttonCenter.Y + windowOffset.Y);
-                
+
                 return finalPos;
             }
             return Vector2.Zero;
