@@ -49,6 +49,5 @@ public enum TaskNodeType
     Movement,
     Transition,
     Loot,
-    ClaimWaypoint,
     MercenaryOptIn
 }

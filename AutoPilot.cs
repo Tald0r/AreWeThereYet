@@ -402,22 +402,26 @@ public class AutoPilot
                             tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
                     }
 
-                    var questLoot = GetQuestItem();
-                    if (questLoot != null &&
-                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
-                        tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
-
-                    var mercenaryOptIn = GetMercenaryOptInButton();
-                    if (mercenaryOptIn != null &&
-                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
+                    var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+                    if(!isHideout)
                     {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        var questLoot = GetQuestItem();
+                        if (questLoot != null &&
+                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                            tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+
+                        var mercenaryOptIn = GetMercenaryOptInButton();
+                        if (mercenaryOptIn != null &&
+                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
                         {
-                            AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                            }
+                            tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                         }
-                        tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                     }
 
                 }
@@ -464,6 +468,7 @@ public class AutoPilot
                         yield return null;
                         yield return null;
                         continue;
+
                     case TaskNodeType.Loot:
                         {
                             currentTask.AttemptCount++;
@@ -496,6 +501,7 @@ public class AutoPilot
 
                             break;
                         }
+
                     case TaskNodeType.Transition:
                         {
                             // Re-validate portal exists and is still valid before attempting to use it
@@ -520,25 +526,6 @@ public class AutoPilot
 
                             currentTask.AttemptCount++;
                             if (currentTask.AttemptCount > 6)
-                                tasks.RemoveAt(0);
-                            {
-                                yield return null;
-                                continue;
-                            }
-                        }
-
-                    case TaskNodeType.ClaimWaypoint:
-                        {
-                            if (Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition) > 150)
-                            {
-                                var screenPos = Helper.WorldToValidScreenPosition(currentTask.WorldPosition);
-                                Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                                yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
-                                yield return Mouse.SetCursorPosAndLeftClickHuman(screenPos, 100);
-                                yield return new WaitTime(1000);
-                            }
-                            currentTask.AttemptCount++;
-                            if (currentTask.AttemptCount > 3)
                                 tasks.RemoveAt(0);
                             {
                                 yield return null;
@@ -699,7 +686,36 @@ public class AutoPilot
         catch (Exception)
         {
         }
-		
+
+        // Quest Item rendering
+        try
+        {
+            var questItemLabels =
+                AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
+                    x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible &&
+                    x.ItemOnGround != null && x.ItemOnGround.Type == EntityType.WorldItem && 
+                    x.ItemOnGround.IsTargetable && x.ItemOnGround.HasComponent<WorldItem>()).Where(x =>
+                {
+                    try
+                    {
+                        var itemEntity = x.ItemOnGround.GetComponent<WorldItem>().ItemEntity;
+                        return AreWeThereYet.Instance.GameController.Files.BaseItemTypes.Translate(itemEntity.Path).ClassName == "QuestItem";
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }).ToList();
+
+            foreach (var questItem in questItemLabels)
+            {
+                AreWeThereYet.Instance.Graphics.DrawLine(questItem.Label.GetClientRectCache.TopLeft, questItem.Label.GetClientRectCache.TopRight, 4f, Color.Lime);
+            }
+        }
+        catch (Exception)
+        {
+        }
+
         // Mercenary OPT-IN button rendering (simple version)
         try
         {
@@ -714,7 +730,7 @@ public class AutoPilot
             foreach (var mercenary in mercenaryLabels)
             {
                 var optInButton = mercenary.Label.Children[2];
-                AreWeThereYet.Instance.Graphics.DrawLine(optInButton.GetClientRectCache.TopLeft, optInButton.GetClientRectCache.TopRight, 3f, Color.Teal);
+                AreWeThereYet.Instance.Graphics.DrawLine(optInButton.GetClientRectCache.TopLeft, optInButton.GetClientRectCache.TopRight, 3f, Color.Cyan);
             }
         }
         catch (Exception)

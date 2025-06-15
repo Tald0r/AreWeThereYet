@@ -29,11 +29,11 @@ public class AutoPilotSettings
     public TextNode LeaderName { get; set; } = new("");
     public ToggleNode DashEnabled { get; set; } = new(false);
     public ToggleNode CloseFollow { get; set; } = new(true);
-    
+
     public HotkeyNode DashKey { get; set; } = new(Keys.W);
     public HotkeyNode MoveKey { get; set; } = new(Keys.Q);
     public HotkeyNode ToggleKey { get; set; } = new(Keys.NumPad9);
-    
+
     // public RangeNode<int> RandomClickOffset { get; set; } = new(10, 1, 100);  -- not implemented right now
     public RangeNode<int> InputFrequency { get; set; } = new(50, 1, 100);
     public RangeNode<int> KeepWithinDistance { get; set; } = new(200, 10, 1000);
