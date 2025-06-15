@@ -414,7 +414,21 @@ public class AutoPilot
                         if (questLoot != null &&
                             Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
                             tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                            }
                             tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+                        }
+                        else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                            var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
+                            AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
+                        }
+
 
                         var mercenaryOptIn = GetMercenaryOptInButton();
                         if (mercenaryOptIn != null &&
@@ -648,29 +662,44 @@ public class AutoPilot
     {
         try
         {
-            return AreWeThereYet.Instance.GameController.EntityListWrapper.Entities
-                .Where(e => e?.Type == EntityType.WorldItem && e.IsTargetable && e.HasComponent<WorldItem>())
-                .FirstOrDefault(e =>
+            var questItemLabels = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
+                        x.Label.IsVisible && x.ItemOnGround != null && 
+                        x.ItemOnGround.Type == EntityType.WorldItem && 
+                        x.ItemOnGround.IsTargetable && x.ItemOnGround.HasComponent<WorldItem>())
+                .Where(x =>
                 {
-                    var itemEntity = e.GetComponent<WorldItem>().ItemEntity;
-                    return AreWeThereYet.Instance.GameController.Files.BaseItemTypes.Translate(itemEntity.Path).ClassName ==
-                           "QuestItem";
-                });
+                    try
+                    {
+                        var itemEntity = x.ItemOnGround.GetComponent<WorldItem>().ItemEntity;
+                        return AreWeThereYet.Instance.GameController.Files.BaseItemTypes.Translate(itemEntity.Path).ClassName == "QuestItem";
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                })
+                .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.Pos))
+                .ToList();
+
+            // Return the Entity from the closest quest item label
+            return questItemLabels?.FirstOrDefault()?.ItemOnGround;
         }
-        catch
+        catch (Exception ex)
         {
+            AreWeThereYet.Instance.LogError($"GetQuestItem failed: {ex.Message}");
             return null;
         }
     }
-		
+
     public void Render()
     {
         if (AreWeThereYet.Instance.Settings.AutoPilot.ToggleKey.PressedOnce())
         {
             AreWeThereYet.Instance.Settings.AutoPilot.Enabled.SetValueNoEvent(!AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value);
-            tasks = new List<TaskNode>();				
+            tasks = new List<TaskNode>();
         }
-			
+
         if (!AreWeThereYet.Instance.Settings.AutoPilot.Enabled || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             return;
 
@@ -685,7 +714,7 @@ public class AutoPilot
 
             foreach (var portal in portalLabels)
             {
-                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f,Color.Firebrick);
+                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f, Color.Firebrick);
             }
         }
         catch (Exception)
@@ -698,7 +727,7 @@ public class AutoPilot
             var questItemLabels =
                 AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels.Where(x =>
                     x != null && x.IsVisible && x.Label != null && x.Label.IsValid && x.Label.IsVisible &&
-                    x.ItemOnGround != null && x.ItemOnGround.Type == EntityType.WorldItem && 
+                    x.ItemOnGround != null && x.ItemOnGround.Type == EntityType.WorldItem &&
                     x.ItemOnGround.IsTargetable && x.ItemOnGround.HasComponent<WorldItem>()).Where(x =>
                 {
                     try
@@ -790,7 +819,7 @@ public class AutoPilot
 
         AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
         AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
-        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ "+ AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " +(followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
-        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490,210), 1, Color.White);
+        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
+        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490, 210), 1, Color.White);
     }
 }
