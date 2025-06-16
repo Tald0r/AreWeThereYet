@@ -30,6 +30,13 @@ public class AutoPilot
     private string _lastKnownLeaderZone = "";
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
 
+    //Leader path tracking
+    private readonly List<Vector3> _leaderPathHistory = new List<Vector3>();
+    private Vector3 _lastRecordedLeaderPos = Vector3.Zero;
+    private DateTime _lastLeaderPosUpdate = DateTime.MinValue;
+    private const float LEADER_BREADCRUMB_DISTANCE = 30f; // Record breadcrumb every 30 units
+    private const int MAX_BREADCRUMBS = 50; // Keep last 50 breadcrumbs
+
     private void ResetPathing()
     {
         tasks = new List<TaskNode>();
@@ -37,7 +44,6 @@ public class AutoPilot
         lastTargetPosition = Vector3.Zero;
         lastPlayerPosition = Vector3.Zero;
     }
-
 
     public void AreaChange()
     {
@@ -69,7 +75,7 @@ public class AutoPilot
             return null;
         }
     }
-    
+
     private bool IsLeaderZoneInfoReliable(PartyElementWindow leaderPartyElement)
     {
         try
@@ -95,6 +101,107 @@ public class AutoPilot
         }
     }
 
+    /// <summary>
+    /// Record leader's movement path for us to follow
+    /// </summary>
+    private void RecordLeaderPath(Vector3 leaderPos)
+    {
+        try
+        {
+            // Only record new breadcrumb if leader moved enough distance
+            var distanceMoved = Vector3.Distance(_lastRecordedLeaderPos, leaderPos);
+            
+            if (distanceMoved >= LEADER_BREADCRUMB_DISTANCE || _lastRecordedLeaderPos == Vector3.Zero)
+            {
+                _leaderPathHistory.Add(leaderPos);
+                _lastRecordedLeaderPos = leaderPos;
+                _lastLeaderPosUpdate = DateTime.Now;
+                
+                // Keep only recent breadcrumbs
+                if (_leaderPathHistory.Count > MAX_BREADCRUMBS)
+                {
+                    _leaderPathHistory.RemoveAt(0);
+                }
+                
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"Recorded leader breadcrumb #{_leaderPathHistory.Count} at distance {distanceMoved:F1}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AreWeThereYet.Instance.LogError($"RecordLeaderPath failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Create movement tasks following leader's actual path
+    /// </summary>
+    private void CreatePathFollowingTasks()
+    {
+        try
+        {
+            // Clear existing movement tasks
+            for (var i = tasks.Count - 1; i >= 0; i--)
+            {
+                if (tasks[i].Type == TaskNodeType.Movement)
+                    tasks.RemoveAt(i);
+            }
+            
+            // If no breadcrumbs available, create one direct task as fallback
+            if (_leaderPathHistory.Count == 0)
+            {
+                if (followTarget != null)
+                {
+                    tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("No breadcrumbs available - created direct task as fallback");
+                    }
+                }
+                return;
+            }
+            
+            // Find breadcrumbs the player hasn't reached yet
+            var playerPos = AreWeThereYet.Instance.playerPosition;
+            var unreachedBreadcrumbs = new List<Vector3>();
+            
+            foreach (var breadcrumb in _leaderPathHistory)
+            {
+                var distanceToBreadcrumb = Vector3.Distance(playerPos, breadcrumb);
+                if (distanceToBreadcrumb > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 0.6f)
+                {
+                    unreachedBreadcrumbs.Add(breadcrumb);
+                }
+            }
+            
+            // Create movement tasks for unreached breadcrumbs
+            var taskCount = 0;
+            foreach (var breadcrumb in unreachedBreadcrumbs.Take(3)) // Reduced from 5 to 3 for better responsiveness
+            {
+                tasks.Add(new TaskNode(breadcrumb, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
+                taskCount++;
+            }
+            
+            // If no unreached breadcrumbs, add leader's current position
+            if (taskCount == 0 && followTarget != null)
+            {
+                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
+                taskCount = 1;
+            }
+            
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true && taskCount > 0)
+            {
+                AreWeThereYet.Instance.LogMessage($"Created {taskCount} path-following tasks from {unreachedBreadcrumbs.Count} unreached breadcrumbs");
+            }
+        }
+        catch (Exception ex)
+        {
+            AreWeThereYet.Instance.LogError($"CreatePathFollowingTasks failed: {ex.Message}");
+        }
+    }
+
     private LabelOnGround GetBestPortalLabel(PartyElementWindow leaderPartyElement)
     {
         try
@@ -102,7 +209,7 @@ public class AutoPilot
             var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
             var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
             var realLevel = AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel ?? 0;
-
+            
             // Enhanced logic: differentiate between leveling zones and endgame content
             if (isHideout || realLevel >= 68)
             {
@@ -114,12 +221,12 @@ public class AutoPilot
                                 x.ItemOnGround.Metadata.ToLower().Contains("portal")))
                     .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
                     .ToList();
-
+                
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"Endgame/Hideout portal search: Found {portalLabels?.Count ?? 0} portals");
                 }
-
+                
                 return isHideout && portalLabels?.Count > 0
                     ? portalLabels[random.Next(portalLabels.Count)] // Random portal in hideout
                     : portalLabels?.FirstOrDefault(); // Closest portal in endgame
@@ -135,7 +242,7 @@ public class AutoPilot
                             x.Label.Text.ToLower().Contains(leaderPartyElement.ZoneName.ToLower())) // IMPORTANT KEY IMPROVEMENT: Check portal text
                     .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
                     .ToList();
-
+                    
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     var allPortals = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
@@ -144,12 +251,12 @@ public class AutoPilot
                                 (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
                                     x.ItemOnGround.Metadata.ToLower().Contains("portal")))
                         .ToList();
-
+                        
                     AreWeThereYet.Instance.LogMessage($"Leveling zone portal search:");
                     AreWeThereYet.Instance.LogMessage($"  - Leader zone: '{leaderPartyElement.ZoneName}'");
                     AreWeThereYet.Instance.LogMessage($"  - All portals: {allPortals?.Count ?? 0}");
                     AreWeThereYet.Instance.LogMessage($"  - Matching portals: {portalLabels?.Count ?? 0}");
-
+                    
                     if (allPortals != null)
                     {
                         foreach (var portal in allPortals)
@@ -159,7 +266,7 @@ public class AutoPilot
                         }
                     }
                 }
-
+                
                 // EXPLICIT NULL CHECK: If no matching portals found in leveling zone, return null for teleport fallback
                 if (portalLabels == null || portalLabels.Count == 0)
                 {
@@ -169,7 +276,7 @@ public class AutoPilot
                     }
                     return null; // Force teleport button usage
                 }
-
+                
                 return portalLabels.FirstOrDefault(); // Return closest matching portal
             }
         }
@@ -187,7 +294,7 @@ public class AutoPilot
             // Better null checking to prevent the exception
             if (AreWeThereYet.Instance?.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels == null)
                 return null;
-
+                
             var mercenaryLabels = AreWeThereYet.Instance.GameController.Game.IngameState.IngameUi.ItemsOnGroundLabels
                 .Where(x => x != null && x.IsVisible && x.Label != null && x.Label.IsValid && 
                         x.Label.IsVisible && x.ItemOnGround != null &&
@@ -197,7 +304,7 @@ public class AutoPilot
                         x.Label.Children[2].IsVisible)
                 .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.Pos))
                 .ToList();
-
+                
             return mercenaryLabels?.FirstOrDefault();
         }
         catch (Exception ex)
@@ -217,7 +324,7 @@ public class AutoPilot
                 var optInButton = mercenaryLabel.Label.Children[2];
                 var buttonCenter = optInButton.GetClientRectCache.Center;
                 var finalPos = new Vector2(buttonCenter.X + windowOffset.X, buttonCenter.Y + windowOffset.Y);
-
+                
                 return finalPos;
             }
             return Vector2.Zero;
@@ -237,7 +344,7 @@ public class AutoPilot
             var windowOffset = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle().TopLeft;
             var elemCenter = (Vector2)leaderPartyElement?.TpButton?.GetClientRectCache.Center;
             var finalPos = new Vector2(elemCenter.X + windowOffset.X, elemCenter.Y + windowOffset.Y);
-
+            
             return finalPos;
         }
         catch
@@ -251,10 +358,10 @@ public class AutoPilot
         try
         {
             var ui = AreWeThereYet.Instance.GameController?.IngameState?.IngameUi?.PopUpWindow;
-
+            
             if (ui.Children[0].Children[0].Children[0].Text.Equals("Are you sure you want to teleport to this player's location?"))
                 return ui.Children[0].Children[0].Children[3].Children[0];
-
+                
             return null;
         }
         catch
@@ -274,7 +381,7 @@ public class AutoPilot
                 clickPos.Value.X + random.Next(-15, 15),
                 clickPos.Value.Y + random.Next(-10, 10)));
         }
-	        
+        
         yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency));
     }
 
@@ -288,10 +395,10 @@ public class AutoPilot
                 yield return new WaitTime(100);
                 continue;
             }
-		        
+            
             followTarget = GetFollowingTarget();
             var leaderPartyElement = GetLeaderPartyElement();
-
+            
             if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
             {
                 // Track zone changes for buffer timing
@@ -306,7 +413,7 @@ public class AutoPilot
                         AreWeThereYet.Instance.LogMessage($"Leader zone change detected: '{_lastKnownLeaderZone}' - starting reliability check");
                     }
                 }
-
+                
                 // Use smarter zone detection to check if leader zone info is reliable
                 if (IsLeaderZoneInfoReliable(leaderPartyElement))
                 {
@@ -314,7 +421,7 @@ public class AutoPilot
                     {
                         AreWeThereYet.Instance.LogMessage($"Leader zone info reliable: '{leaderPartyElement.ZoneName}' - proceeding with portal/teleport logic");
                     }
-
+                    
                     var portal = GetBestPortalLabel(leaderPartyElement);
                     if (portal != null)
                     {
@@ -330,7 +437,7 @@ public class AutoPilot
                         {
                             AreWeThereYet.Instance.LogMessage("No suitable portal found - using teleport button fallback");
                         }
-
+                        
                         var tpConfirmation = GetTpConfirmation();
                         if (tpConfirmation != null)
                         {
@@ -339,7 +446,7 @@ public class AutoPilot
                             yield return Mouse.LeftClick();
                             yield return new WaitTime(1000);
                         }
-
+                        
                         var tpButton = GetTpButton(leaderPartyElement);
                         if (!tpButton.Equals(Vector2.Zero))
                         {
@@ -371,6 +478,7 @@ public class AutoPilot
                 _lastKnownLeaderZone = "";
                 _leaderZoneChangeTime = DateTime.MinValue;
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     var distanceMoved = Vector3.Distance(lastTargetPosition, followTarget.Pos);
@@ -380,35 +488,39 @@ public class AutoPilot
                         if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
                             tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
                     }
-                    else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
-                    {
-                        tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
-
-                    else if (tasks.Count > 0)
-                    {
-                        var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
-                        if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance)
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
                 }
                 else
                 {
-                    if (tasks.Count > 0)
+                    // FIXED: Always use path following for normal distances
+                    if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                     {
+                        // Record leader's current position for path tracking
+                        RecordLeaderPath(followTarget.Pos);
+                        
+                        // Create tasks following leader's actual path instead of direct line
+                        if (tasks.Count == 0 || tasks.Count(t => t.Type == TaskNodeType.Movement) < 3)
+                        {
+                            CreatePathFollowingTasks();
+                        }
+                    }
+                    else
+                    {
+                        // Close range - clear movement tasks, only use direct positioning for very close distances
                         for (var i = tasks.Count - 1; i >= 0; i--)
                             if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
                                 tasks.RemoveAt(i);
                         yield return null;
-                    }
-                    if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
-                    {
-                        if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                        
+                        // Only create direct-line task for very close positioning (< KeepWithinDistance)
+                        if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value &&
+                            distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 0.8f)
+                        {
                             tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
                     }
-
+                    
                     var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
-                    if(!isHideout)
+                    if (!isHideout)
                     {
                         var questLoot = GetQuestItem();
                         if (questLoot != null &&
@@ -428,8 +540,7 @@ public class AutoPilot
                             var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
                             AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
                         }
-
-
+                        
                         var mercenaryOptIn = GetMercenaryOptInButton();
                         if (mercenaryOptIn != null &&
                             Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
@@ -442,19 +553,18 @@ public class AutoPilot
                             tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                         }
                     }
-
                 }
                 if (followTarget?.Pos != null)
                     lastTargetPosition = followTarget.Pos;
             }
-
+            
             if (tasks?.Count > 0)
             {
                 var currentTask = tasks.First();
                 var taskDistance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition);
                 var playerDistanceMoved = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastPlayerPosition);
-
-                if (currentTask.Type == TaskNodeType.Transition && 
+                
+                if (currentTask.Type == TaskNodeType.Transition &&
                     playerDistanceMoved >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     tasks.RemoveAt(0);
@@ -481,13 +591,13 @@ public class AutoPilot
                             yield return new WaitTime(random.Next(25) + 30);
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         }
-
+                        
                         if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
                             tasks.RemoveAt(0);
                         yield return null;
                         yield return null;
                         continue;
-
+                        
                     case TaskNodeType.Loot:
                         {
                             currentTask.AttemptCount++;
@@ -500,7 +610,7 @@ public class AutoPilot
                                 tasks.RemoveAt(0);
                                 yield return null;
                             }
-
+                            
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
                             if (questLoot != null)
@@ -517,10 +627,10 @@ public class AutoPilot
                                         break;
                                 }
                             }
-
+                            
                             break;
                         }
-
+                        
                     case TaskNodeType.Transition:
                         {
                             // Re-validate portal exists and is still valid before attempting to use it
@@ -532,17 +642,17 @@ public class AutoPilot
                                 {
                                     AreWeThereYet.Instance.LogMessage("Portal became invalid - removing transition task, will re-evaluate in main loop");
                                 }
-
+                                
                                 tasks.RemoveAt(0);
                                 yield return null;
                                 continue;
                             }
-
+                            
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(60);
                             yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
                             yield return new WaitTime(300);
-
+                            
                             currentTask.AttemptCount++;
                             if (currentTask.AttemptCount > 6)
                                 tasks.RemoveAt(0);
@@ -551,12 +661,12 @@ public class AutoPilot
                                 continue;
                             }
                         }
-
+                        
                     case TaskNodeType.MercenaryOptIn:
                         {
                             currentTask.AttemptCount++;
                             var mercenaryOptIn = GetMercenaryOptInButton();
-
+                            
                             // Remove task if button disappeared, too many attempts, or we're too far
                             if (mercenaryOptIn == null ||
                                 currentTask.AttemptCount > 3 ||
@@ -569,16 +679,16 @@ public class AutoPilot
                                                 currentTask.AttemptCount > 3 ? "too many attempts" : "too far away";
                                     AreWeThereYet.Instance.LogMessage($"Removing mercenary OPT-IN task: {reason}");
                                 }
-
+                                
                                 tasks.RemoveAt(0);
                                 yield return null;
                                 continue;
                             }
-
+                            
                             // Stop movement and click the button
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
-
+                            
                             var buttonPos = GetMercenaryOptInButtonPosition(mercenaryOptIn);
                             if (!buttonPos.Equals(Vector2.Zero))
                             {
@@ -586,12 +696,12 @@ public class AutoPilot
                                 {
                                     AreWeThereYet.Instance.LogMessage($"Clicking mercenary OPT-IN button at {buttonPos}");
                                 }
-
+                                
                                 yield return Mouse.SetCursorPosHuman(buttonPos, false);
                                 yield return new WaitTime(200);
                                 yield return Mouse.LeftClick();
                                 yield return new WaitTime(500); // Wait for button to process click
-
+                                
                                 // Remove task after clicking (button should disappear)
                                 tasks.RemoveAt(0);
                             }
@@ -600,7 +710,7 @@ public class AutoPilot
                                 // Couldn't get button position, remove task
                                 tasks.RemoveAt(0);
                             }
-
+                            
                             break;
                         }
                 }
@@ -609,7 +719,7 @@ public class AutoPilot
             yield return new WaitTime(50);
         }
     }
-    
+
     private bool ShouldUseDash(Vector2 targetPosition)
     {
         try
@@ -635,11 +745,10 @@ public class AutoPilot
                     AreWeThereYet.Instance.LogMessage("ShouldUseDash: Dash not enabled in settings");
                 return false;
             }
-
+            
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
             var distance = Vector2.Distance(playerPos, targetPosition);
             
-            // FIXED: Use configurable distance ranges instead of hardcoded values
             var minDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMinDistance.Value;
             var maxDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMaxDistance.Value;
             
@@ -653,36 +762,24 @@ public class AutoPilot
             // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
             var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
             var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
-
-            // FIXED: Handle terrain data unavailable properly with configurable heuristic
-            bool hasLineOfSight;
+            
+            // NEW: Only dash if this specific path segment is blocked
             if (LineOfSight._terrainData == null)
             {
-                // When no terrain data, use configurable heuristic threshold
-                var heuristicThreshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.HeuristicThreshold.Value;
-                hasLineOfSight = distance < heuristicThreshold; // Heuristic: close = clear, far = blocked
-                
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: No terrain data, using heuristic threshold {heuristicThreshold} - hasLineOfSight: {hasLineOfSight}");
-            }
-            else
-            {
-                hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
-                
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: Terrain check - hasLineOfSight: {hasLineOfSight}");
+                return distance > 100; // Conservative fallback
             }
             
-            // Dash when there's NO line of sight (obstacles in the way) and within distance range
+            // Check if THIS path segment is blocked (not the entire line to leader)
+            var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
             var shouldDash = !hasLineOfSight && distance >= minDistance;
             
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
-                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, hasLineOfSight: {hasLineOfSight}, range: {minDistance}-{maxDistance})");
+                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, hasLineOfSight: {hasLineOfSight}, pathSegment: true)");
             }
             
             return shouldDash;
-        }
+            }
         catch (Exception ex)
         {
             // Log the error but DON'T let it bubble up to crash the coroutine
@@ -727,7 +824,7 @@ public class AutoPilot
                 })
                 .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.Pos))
                 .ToList();
-
+                
             // Return the Entity from the closest quest item label
             return questItemLabels?.FirstOrDefault()?.ItemOnGround;
         }
@@ -745,10 +842,10 @@ public class AutoPilot
             AreWeThereYet.Instance.Settings.AutoPilot.Enabled.SetValueNoEvent(!AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value);
             tasks = new List<TaskNode>();
         }
-
+        
         if (!AreWeThereYet.Instance.Settings.AutoPilot.Enabled || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             return;
-
+            
         try
         {
             var portalLabels =
@@ -757,7 +854,7 @@ public class AutoPilot
                     x.ItemOnGround != null &&
                     (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
                      x.ItemOnGround.Metadata.ToLower().Contains("portal"))).ToList();
-
+                    
             foreach (var portal in portalLabels)
             {
                 AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f, Color.Firebrick);
@@ -766,7 +863,7 @@ public class AutoPilot
         catch (Exception)
         {
         }
-
+        
         // Quest Item rendering
         try
         {
@@ -786,7 +883,7 @@ public class AutoPilot
                         return false;
                     }
                 }).ToList();
-
+                
             foreach (var questItem in questItemLabels)
             {
                 AreWeThereYet.Instance.Graphics.DrawLine(questItem.Label.GetClientRectCache.TopLeft, questItem.Label.GetClientRectCache.TopRight, 4f, Color.Lime);
@@ -795,7 +892,7 @@ public class AutoPilot
         catch (Exception)
         {
         }
-
+        
         // Mercenary OPT-IN button rendering (simple version)
         try
         {
@@ -806,7 +903,7 @@ public class AutoPilot
                     x.ItemOnGround.Metadata.ToLower().Contains("mercenary") &&
                     x.Label.Children?.Count > 2 && x.Label.Children[2] != null &&
                     x.Label.Children[2].IsVisible).ToList();
-
+                    
             foreach (var mercenary in mercenaryLabels)
             {
                 var optInButton = mercenary.Label.Children[2];
@@ -816,13 +913,13 @@ public class AutoPilot
         catch (Exception)
         {
         }
-
+        
         try
         {
             var taskCount = 0;
             var dist = 0f;
             var cachedTasks = tasks;
-
+            
             var lineWidth = (float)AreWeThereYet.Instance.Settings.AutoPilot.Visual.TaskLineWidth.Value;
             var lineColor = AreWeThereYet.Instance.Settings.AutoPilot.Visual.TaskLineColor.Value;
             if (cachedTasks?.Count > 0)
@@ -845,7 +942,7 @@ public class AutoPilot
                         AreWeThereYet.Instance.Graphics.DrawLine(Helper.WorldToValidScreenPosition(task.WorldPosition),
                             Helper.WorldToValidScreenPosition(cachedTasks[taskCount - 1].WorldPosition), lineWidth, lineColor);
                     }
-
+                    
                     taskCount++;
                 }
             }
@@ -862,7 +959,7 @@ public class AutoPilot
         catch (Exception)
         {
         }
-
+        
         AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
         AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
         AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
