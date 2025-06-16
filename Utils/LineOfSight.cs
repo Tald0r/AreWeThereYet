@@ -31,6 +31,10 @@ namespace AreWeThereYet.Utils
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
         private readonly HashSet<Vector2> _debugVisiblePoints = new();
         private float _lastObserverZ;
+        
+        // Position tracking for movement-based updates
+        private Vector2 _lastDebugGridCenter = new Vector2(float.MinValue, float.MinValue);
+        private const float MOVEMENT_THRESHOLD = 5.0f; // Only update if player moved 5+ units
 
         // Cursor ray tracking
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _cursorRays = new();
@@ -50,46 +54,111 @@ namespace AreWeThereYet.Utils
             UpdateArea();
         }
 
+        /// <summary>
+        /// Smart render handler - separates terrain grid (movement-based) from cursor/debug (always updated)
+        /// </summary>
         private void HandleRender(RenderEvent evt)
         {
-            if (!AreWeThereYet.Instance.Settings.Debug.EnableRendering) return;
-            if (!AreWeThereYet.Instance.Settings.Debug.ShowTerrainDebug) return;
+            try
+            {
+                if (!AreWeThereYet.Instance.Settings.Debug.EnableRendering) return;
+                if (!AreWeThereYet.Instance.Settings.Debug.ShowTerrainDebug) return;
+                if (_terrainData == null) return;
 
-            if (_terrainData == null) return;
+                var currentPlayerPos = _gameController.Player.GridPosNum;
+                
+                // TERRAIN GRID: Update only when player moves (heavy operation)
+                var playerMoved = Vector2.Distance(_lastDebugGridCenter, currentPlayerPos) >= MOVEMENT_THRESHOLD;
+                if (playerMoved || _lastDebugGridCenter.Equals(new Vector2(float.MinValue, float.MinValue)))
+                {
+                    UpdateDebugGrid(currentPlayerPos);
+                }
 
-            // Check if we need to refresh terrain data for door detection
-            RefreshTerrainData();
+                // CURSOR RAYS: Always update (lightweight, depends on mouse movement)
+                var cursorWorldPos = AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true
+                    ? AreWeThereYet.Instance.GameController.IngameState.ServerData.WorldMousePositionNum.WorldToGrid()
+                    : (Vector2?)null;
 
-            // Update observer with cursor position
-            var cursorWorldPos = AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true
-                ? AreWeThereYet.Instance.GameController.IngameState.ServerData.WorldMousePositionNum.WorldToGrid()
-                : (Vector2?)null;
+                UpdateCursorRays(currentPlayerPos, cursorWorldPos);
 
-            UpdateObserver(_gameController.Player.GridPosNum, cursorWorldPos);
-
-            RenderTerrainGrid(evt);
-            RenderCursorRays(evt);
-            RenderDebugInfo(evt);
+                // RENDER ALL: Always render existing data
+                RenderTerrainGrid(evt);      // Renders cached terrain grid (stable when not moving)
+                RenderCursorRays(evt);       // Renders current cursor ray (updates with mouse)
+                RenderDebugInfo(evt);        // Renders current debug info (always fresh)
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"HandleRender failed: {ex.Message}");
+            }
         }
 
         /// <summary>
-        /// Update observer with optional cursor position for ray casting
+        /// Lightweight cursor ray updates - clears old visible points first
         /// </summary>
-        public void UpdateObserver(Vector2 playerPosition, Vector2? cursorPosition = null)
+        private void UpdateCursorRays(Vector2 playerPosition, Vector2? cursorPosition)
         {
-            _debugVisiblePoints.Clear();
-            _cursorRays.Clear();
-            
-            UpdateDebugGrid(playerPosition);
-
-            // Cast ray to cursor position if enabled
-            if (cursorPosition.HasValue && AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true)
+            try
             {
-                _lastCursorPosition = cursorPosition.Value;
-                var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
-                _cursorRays.Add((playerPosition, cursorPosition.Value, isVisible));
+                _cursorRays.Clear();
+                
+                // CRITICAL FIX: Clear old visible points before new raycast
+                _debugVisiblePoints.Clear();
+                
+                // Always update cursor ray if enabled (mouse movement should be responsive)
+                if (cursorPosition.HasValue && 
+                    AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true &&
+                    _terrainData != null)
+                {
+                    _lastCursorPosition = cursorPosition.Value;
+                    var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
+                    _cursorRays.Add((playerPosition, cursorPosition.Value, isVisible));
+                }
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"UpdateCursorRays failed: {ex.Message}");
+                _cursorRays.Clear();
+                _debugVisiblePoints.Clear(); // Clear on error too
             }
         }
+
+
+        // /// <summary>
+        // /// Thread-safe observer update with reduced terrain access
+        // /// </summary>
+        // public void UpdateObserver(Vector2 playerPosition, Vector2? cursorPosition = null)
+        // {
+        //     try
+        //     {
+        //         _debugVisiblePoints.Clear();
+        //         _cursorRays.Clear();
+                
+        //         // Only update debug grid if terrain data is stable
+        //         if (_terrainData != null)
+        //         {
+        //             UpdateDebugGrid(playerPosition);
+        //         }
+
+        //         // Cast ray to cursor position if enabled (with safety checks)
+        //         if (cursorPosition.HasValue && 
+        //             AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true &&
+        //             _terrainData != null)
+        //         {
+        //             _lastCursorPosition = cursorPosition.Value;
+        //             var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
+        //             _cursorRays.Add((playerPosition, cursorPosition.Value, isVisible));
+        //         }
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         AreWeThereYet.Instance.LogError($"UpdateObserver failed: {ex.Message}");
+        //         // Clear debug data on error to prevent cascading issues
+        //         _debugPoints.Clear();
+        //         _cursorRays.Clear();
+        //         _debugVisiblePoints.Clear();
+        //     }
+        // }
+
 
         /// <summary>
         /// TraceMyRay-style area update with support for both terrain types
@@ -102,23 +171,40 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Hybrid approach: Use TraceMyRay's simple API access with periodic refresh for door detection
+        /// Enhanced terrain refresh with better timing and error handling
         /// </summary>
         private void RefreshTerrainData()
         {
-            var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
-            
-            if (timeSinceRefresh >= TerrainRefreshInterval)
+            try
             {
-                UpdateTerrainData();
-                _lastTerrainRefresh = DateTime.Now;
+                var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
+                var refreshInterval = TerrainRefreshInterval;
                 
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                if (timeSinceRefresh >= refreshInterval)
                 {
-                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed terrain data at {DateTime.Now:HH:mm:ss.fff}");
+                    var oldDataExists = _terrainData != null;
+                    
+                    UpdateTerrainData();
+                    
+                    // CRITICAL FIX: Always update timer, even if update failed
+                    _lastTerrainRefresh = DateTime.Now;
+                    
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        var status = _terrainData != null ? "SUCCESS" : "FAILED";
+                        AreWeThereYet.Instance.LogMessage($"LineOfSight: Terrain refresh {status} at {DateTime.Now:HH:mm:ss.fff} (interval: {refreshInterval}ms)");
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"RefreshTerrainData failed: {ex.Message}");
+                
+                // CRITICAL FIX: Still update timer even on exception to prevent endless retries
+                _lastTerrainRefresh = DateTime.Now;
+            }
         }
+
 
         /// <summary>
         /// Enhanced terrain data loading - usin new "per-frame cached terrain data"
@@ -220,9 +306,9 @@ namespace AreWeThereYet.Utils
                 // Force refresh check before critical pathfinding decisions
                 RefreshTerrainData();
 
-                // Update debug visualization
-                _debugVisiblePoints.Clear();
-                UpdateDebugGrid(start);
+                // DON'T clear _debugVisiblePoints here anymore - it's handled in UpdateCursorRays
+                // _debugVisiblePoints.Clear(); // REMOVED THIS LINE
+                // UpdateDebugGrid(start); // REMOVED THIS LINE
 
                 var isVisible = HasLineOfSightInternal(start, end);
                 _debugRays.Add((start, end, isVisible));
@@ -345,23 +431,55 @@ namespace AreWeThereYet.Utils
         }
 
 
+        /// <summary>
+        /// Smart debug grid - only updates when player actually moves AND clears cursor traces
+        /// </summary>
         private void UpdateDebugGrid(Vector2 center)
         {
+            // Check if player moved enough to warrant a grid update
+            var distanceMoved = Vector2.Distance(_lastDebugGridCenter, center);
+            
+            if (distanceMoved < MOVEMENT_THRESHOLD)
+            {
+                // Player hasn't moved enough - keep existing debug points
+                return;
+            }
+            
+            // Player moved significantly - update the grid
+            _lastDebugGridCenter = center;
             _debugPoints.Clear();
-            const int size = 200;
+            
+            // CRITICAL FIX: Clear cursor raycast traces when terrain grid updates
+            _debugVisiblePoints.Clear();
+            
+            var size = AreWeThereYet.Instance.Settings.Debug.Terrain.GridSize.Value;
+            
+            try
+            {
+                for (var y = -size; y <= size; y += 2) // Sample every 2nd point
+                    for (var x = -size; x <= size; x += 2)
+                    {
+                        if (x * x + y * y > size * size) continue; // Circular pattern
 
-            for (var y = -size; y <= size; y++)
-                for (var x = -size; x <= size; x++)
+                        var pos = new Vector2(center.X + x, center.Y + y);
+                        var value = GetTerrainValue(pos);
+                        if (value >= 0) _debugPoints.Add((pos, value));
+                    }
+
+                _lastObserverZ = _gameController.IngameState.Data.GetTerrainHeightAt(center);
+                
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
-                    if (x * x + y * y > size * size) continue;
-
-                    var pos = new Vector2(center.X + x, center.Y + y);
-                    var value = GetTerrainValue(pos);
-                    if (value >= 0) _debugPoints.Add((pos, value));
+                    AreWeThereYet.Instance.LogMessage($"Debug grid updated - Player moved {distanceMoved:F1} units");
                 }
-
-            _lastObserverZ = _gameController.IngameState.Data.GetTerrainHeightAt(center);
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"UpdateDebugGrid failed: {ex.Message}");
+                // Don't clear on error - keep existing points visible
+            }
         }
+
 
         /// <summary>
         /// Enhanced debug rendering with TraceMyRay-style color mapping
@@ -374,7 +492,7 @@ namespace AreWeThereYet.Utils
                 var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
                     ? _lastObserverZ
                     : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
-                    
+
                 var worldPos = new Vector3(pos.GridToWorld(), z);
                 var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
 
@@ -475,22 +593,27 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Debug information rendering
+        /// Enhanced debug information rendering with better timer display
         /// </summary> 
         private void RenderDebugInfo(RenderEvent evt)
         {
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
                 var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
+                var refreshInterval = TerrainRefreshInterval;
+                
+                // Better status display
+                var refreshStatus = timeSinceRefresh >= refreshInterval ? "DUE" : "OK";
+                var dataStatus = _terrainData != null ? "LOADED" : "NULL";
                 
                 evt.Graphics.DrawText(
-                    $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
+                    $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago ({refreshStatus}) | Threshold: {TerrainValueForCollision} | Data: {dataStatus}",
                     new Vector2(10, 200),
                     SharpDX.Color.White
                 );
                 
                 evt.Graphics.DrawText(
-                    $"Terrain Data: {_terrainData?.Length ?? 0} rows (LayerMelee + LayerRanged)",
+                    $"Terrain Data: {_terrainData?.Length ?? 0} rows (LayerMelee + LayerRanged) | Interval: {refreshInterval}ms",
                     new Vector2(10, 220),
                     SharpDX.Color.White
                 );
@@ -502,7 +625,7 @@ namespace AreWeThereYet.Utils
                     var cursorRayColor = _cursorRays[0].IsVisible ? SharpDX.Color.Green : SharpDX.Color.Red;
                     
                     evt.Graphics.DrawText(
-                        $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1})",
+                        $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1}) | Traces: {_debugVisiblePoints.Count}",
                         new Vector2(10, 240),
                         cursorRayColor
                     );

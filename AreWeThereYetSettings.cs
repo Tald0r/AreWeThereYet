@@ -90,6 +90,7 @@ public class DebugSettings
     [Submenu(CollapsedByDefault = false)]
     public class TerrainSettings
     {
+        public RangeNode<int> GridSize { get; set; } = new(80, 1, 1000);
         public ToggleNode ReplaceValuesWithDots { get; set; } = new(false);
         public RangeNode<float> DotSize { get; set; } = new(3.0f, 1.0f, 100.0f);
         public RangeNode<int> DotSegments { get; set; } = new(16, 3, 6);
