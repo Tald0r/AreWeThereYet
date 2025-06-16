@@ -56,7 +56,7 @@ public class AutoPilotSettings
     [Submenu(CollapsedByDefault = true)]
     public class DashSettings
     {
-        public RangeNode<int> TerrainValueForCollision { get; set; } = new(2, 0, 5);
+        public RangeNode<int> TerrainValueForCollision { get; set; } = new(3, 0, 5);
         
         [Menu("Minimum Dash Distance")]
         public RangeNode<int> DashMinDistance { get; set; } = new(10, 0, 1000);
@@ -84,7 +84,6 @@ public class DebugSettings
     {
         public ToggleNode CastRayToWorldCursorPos { get; set; } = new(true);
         public ToggleNode DrawAtPlayerPlane { get; set; } = new(true);
-        public RangeNode<int> TerrainValueForCollision { get; set; } = new(2, 0, 5);
     }
 
     [Submenu(CollapsedByDefault = false)]

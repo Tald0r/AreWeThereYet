@@ -22,10 +22,6 @@ namespace AreWeThereYet.Utils
         private DateTime _lastTerrainRefresh = DateTime.MinValue;
         private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.Debug.Terrain.RefreshInterval?.Value ?? 500;
         
-        // TraceMyRay-style settings integration
-        //private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
-        private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.Debug.Raycast.TerrainValueForCollision?.Value ?? 2;
-        
         // Debug visualization (keeping your current approach but enhanced)
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
@@ -55,7 +51,7 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Smart render handler - separates terrain grid (movement-based) from cursor/debug (always updated)
+        /// Smart render handler with automatic terrain refresh
         /// </summary>
         private void HandleRender(RenderEvent evt)
         {
@@ -63,6 +59,10 @@ namespace AreWeThereYet.Utils
             {
                 if (!AreWeThereYet.Instance.Settings.Debug.EnableRendering) return;
                 if (!AreWeThereYet.Instance.Settings.Debug.ShowTerrainDebug) return;
+
+                // CRITICAL FIX: Always check for terrain refresh, not just during line-of-sight checks
+                RefreshTerrainData();
+
                 if (_terrainData == null) return;
 
                 var currentPlayerPos = _gameController.Player.GridPosNum;
@@ -91,6 +91,7 @@ namespace AreWeThereYet.Utils
                 AreWeThereYet.Instance.LogError($"HandleRender failed: {ex.Message}");
             }
         }
+
 
         /// <summary>
         /// Lightweight cursor ray updates - clears old visible points first
@@ -121,44 +122,6 @@ namespace AreWeThereYet.Utils
                 _debugVisiblePoints.Clear(); // Clear on error too
             }
         }
-
-
-        // /// <summary>
-        // /// Thread-safe observer update with reduced terrain access
-        // /// </summary>
-        // public void UpdateObserver(Vector2 playerPosition, Vector2? cursorPosition = null)
-        // {
-        //     try
-        //     {
-        //         _debugVisiblePoints.Clear();
-        //         _cursorRays.Clear();
-                
-        //         // Only update debug grid if terrain data is stable
-        //         if (_terrainData != null)
-        //         {
-        //             UpdateDebugGrid(playerPosition);
-        //         }
-
-        //         // Cast ray to cursor position if enabled (with safety checks)
-        //         if (cursorPosition.HasValue && 
-        //             AreWeThereYet.Instance.Settings.Debug.Raycast.CastRayToWorldCursorPos?.Value == true &&
-        //             _terrainData != null)
-        //         {
-        //             _lastCursorPosition = cursorPosition.Value;
-        //             var isVisible = HasLineOfSightInternal(playerPosition, cursorPosition.Value);
-        //             _cursorRays.Add((playerPosition, cursorPosition.Value, isVisible));
-        //         }
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         AreWeThereYet.Instance.LogError($"UpdateObserver failed: {ex.Message}");
-        //         // Clear debug data on error to prevent cascading issues
-        //         _debugPoints.Clear();
-        //         _cursorRays.Clear();
-        //         _debugVisiblePoints.Clear();
-        //     }
-        // }
-
 
         /// <summary>
         /// TraceMyRay-style area update with support for both terrain types
@@ -289,7 +252,7 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Main line-of-sight check with automatic terrain refresh
+        /// Main line-of-sight check - refresh now handled by render loop
         /// </summary>
         public bool HasLineOfSight(Vector2 start, Vector2 end)
         {
@@ -303,12 +266,8 @@ namespace AreWeThereYet.Utils
                     return true; // Conservative fallback
                 }
 
-                // Force refresh check before critical pathfinding decisions
-                RefreshTerrainData();
-
-                // DON'T clear _debugVisiblePoints here anymore - it's handled in UpdateCursorRays
-                // _debugVisiblePoints.Clear(); // REMOVED THIS LINE
-                // UpdateDebugGrid(start); // REMOVED THIS LINE
+                // REMOVED: RefreshTerrainData() - now handled by render loop
+                // RefreshTerrainData();
 
                 var isVisible = HasLineOfSightInternal(start, end);
                 _debugRays.Add((start, end, isVisible));
@@ -318,7 +277,7 @@ namespace AreWeThereYet.Utils
             catch (Exception ex)
             {
                 AreWeThereYet.Instance.LogError($"HasLineOfSight failed: {ex.Message}");
-                return true; // Conservative fallback - assume line of sight when terrain check fails
+                return true; // Conservative fallback
             }
         }
 
@@ -605,9 +564,11 @@ namespace AreWeThereYet.Utils
                 // Better status display
                 var refreshStatus = timeSinceRefresh >= refreshInterval ? "DUE" : "OK";
                 var dataStatus = _terrainData != null ? "LOADED" : "NULL";
+
+                var threshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.TerrainValueForCollision.Value;
                 
                 evt.Graphics.DrawText(
-                    $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago ({refreshStatus}) | Threshold: {TerrainValueForCollision} | Data: {dataStatus}",
+                    $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago ({refreshStatus}) | Threshold: {threshold} | Data: {dataStatus}",
                     new Vector2(10, 200),
                     SharpDX.Color.White
                 );
