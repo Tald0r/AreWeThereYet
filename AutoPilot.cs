@@ -133,13 +133,14 @@ public class AutoPilot
     }
 
     /// <summary>
-    /// FIXED: More conservative task creation for smooth following
+    /// FIXED: Create multiple sequential breadcrumb tasks like a GPS route
     /// </summary>
     private void CreatePathFollowingTasks()
     {
         try
         {
-            // FIXED: Less aggressive task clearing - only clear if we really need to rebuild
+            // NEVER clear existing movement tasks unless they're wrong
+            // Only create tasks if we have very few
             var currentMovementTasks = tasks.Where(t => t.Type == TaskNodeType.Movement).ToList();
             
             if (_leaderPathHistory.Count == 0)
@@ -151,56 +152,36 @@ public class AutoPilot
                 return;
             }
             
+            // FIXED: Only create tasks if we need more
+            if (currentMovementTasks.Count >= 3) return; // Already have enough tasks
+            
             var playerPos = AreWeThereYet.Instance.playerPosition;
-            var nextBreadcrumbIndex = FindNextSequentialBreadcrumb(playerPos);
             
-            if (nextBreadcrumbIndex == -1)
-            {
-                // All breadcrumbs completed - only add leader task if no movement tasks exist
-                if (followTarget != null && currentMovementTasks.Count == 0)
-                {
-                    tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
-                }
-                return;
-            }
+            // Find which breadcrumbs we haven't created tasks for yet
+            var taskPositions = currentMovementTasks.Select(t => t.WorldPosition).ToList();
+            var tasksToCreate = new List<Vector3>();
             
-            // FIXED: Only rebuild tasks if current tasks don't match next breadcrumbs
-            var shouldRebuildTasks = false;
-            
-            if (currentMovementTasks.Count == 0)
+            foreach (var breadcrumb in _leaderPathHistory)
             {
-                shouldRebuildTasks = true;
-            }
-            else
-            {
-                // Check if first current task matches next breadcrumb
-                var firstTaskPos = currentMovementTasks[0].WorldPosition;
-                var nextBreadcrumbPos = _leaderPathHistory[nextBreadcrumbIndex];
-                var distance = Vector3.Distance(firstTaskPos, nextBreadcrumbPos);
+                // Check if we already have a task for this breadcrumb
+                var hasTaskForBreadcrumb = taskPositions.Any(taskPos => Vector3.Distance(taskPos, breadcrumb) < 30f);
                 
-                if (distance > 30f) // Tasks don't match breadcrumbs
+                if (!hasTaskForBreadcrumb)
                 {
-                    shouldRebuildTasks = true;
+                    tasksToCreate.Add(breadcrumb);
+                    if (tasksToCreate.Count >= 5) break; // Limit to next 5 breadcrumbs
                 }
             }
             
-            if (shouldRebuildTasks)
+            // Create tasks for new breadcrumbs in order
+            foreach (var breadcrumb in tasksToCreate)
             {
-                // Clear existing movement tasks
-                for (var i = tasks.Count - 1; i >= 0; i--)
-                {
-                    if (tasks[i].Type == TaskNodeType.Movement)
-                        tasks.RemoveAt(i);
-                }
-                
-                // FIXED: Create only the NEXT breadcrumb task (not multiple)
-                var nextBreadcrumb = _leaderPathHistory[nextBreadcrumbIndex];
-                tasks.Add(new TaskNode(nextBreadcrumb, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
-                
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                {
-                    AreWeThereYet.Instance.LogMessage($"Created task for breadcrumb #{nextBreadcrumbIndex + 1} - {_leaderPathHistory.Count} total breadcrumbs");
-                }
+                tasks.Add(new TaskNode(breadcrumb, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
+            }
+            
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true && tasksToCreate.Count > 0)
+            {
+                AreWeThereYet.Instance.LogMessage($"Created {tasksToCreate.Count} sequential breadcrumb tasks - Total tasks: {tasks.Count(t => t.Type == TaskNodeType.Movement)}");
             }
         }
         catch (Exception ex)
@@ -210,43 +191,7 @@ public class AutoPilot
     }
 
     /// <summary>
-    /// Find the FIRST uncompleted breadcrumb with proper completion distance
-    /// </summary>
-    private int FindNextSequentialBreadcrumb(Vector3 playerPos)
-    {
-        try
-        {
-            // FIXED: Much smaller completion distance for precise sequential following
-            var completionDistance = 40f; // Fixed value, not based on KeepWithinDistance
-            
-            // Find the first breadcrumb that hasn't been reached yet
-            for (var i = 0; i < _leaderPathHistory.Count; i++)
-            {
-                var distanceToBreadcrumb = Vector3.Distance(playerPos, _leaderPathHistory[i]);
-                
-                if (distanceToBreadcrumb > completionDistance)
-                {
-                    // This breadcrumb hasn't been reached yet - this is our next target
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage($"Next breadcrumb: #{i+1} at distance {distanceToBreadcrumb:F1}");
-                    }
-                    return i;
-                }
-            }
-            
-            // All breadcrumbs have been reached
-            return -1;
-        }
-        catch (Exception ex)
-        {
-            AreWeThereYet.Instance.LogError($"FindNextSequentialBreadcrumb failed: {ex.Message}");
-            return 0;
-        }
-    }
-    
-    /// <summary>
-    /// FIXED: Remove only ONE completed breadcrumb at a time for smooth sequential following
+    /// FIXED: Only remove breadcrumbs when bot actually passes through them
     /// </summary>
     private void CleanupCompletedBreadcrumbs()
     {
@@ -255,22 +200,26 @@ public class AutoPilot
             if (_leaderPathHistory.Count == 0) return;
             
             var playerPos = AreWeThereYet.Instance.playerPosition;
-            var completionDistance = 40f; // Same as FindNextSequentialBreadcrumb
+            var completionDistance = 25f; // Smaller distance - must actually reach the breadcrumb
             
-            // FIXED: Only remove the FIRST breadcrumb if it's completed
-            if (_leaderPathHistory.Count > 0)
+            // Only remove breadcrumbs from the FRONT that have been actually reached
+            while (_leaderPathHistory.Count > 0)
             {
                 var firstBreadcrumb = _leaderPathHistory[0];
                 var distanceToFirst = Vector3.Distance(playerPos, firstBreadcrumb);
                 
                 if (distanceToFirst <= completionDistance)
                 {
-                    _leaderPathHistory.RemoveAt(0); // Remove only the first one
+                    _leaderPathHistory.RemoveAt(0);
                     
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
-                        AreWeThereYet.Instance.LogMessage($"Completed breadcrumb #1 - {_leaderPathHistory.Count} remaining");
+                        AreWeThereYet.Instance.LogMessage($"REACHED breadcrumb - {_leaderPathHistory.Count} remaining in path");
                     }
+                }
+                else
+                {
+                    break; // First breadcrumb not reached yet, stop checking
                 }
             }
             
@@ -577,15 +526,15 @@ public class AutoPilot
                 }
                 else
                 {
-                    // FIXED: Always use path following for normal distances
+                    // FIXED: Much simpler task creation logic
                     if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                     {
-                        // Record leader's current position for path tracking
+                        // Always record leader's current position
                         RecordLeaderPath(followTarget.Pos);
                         
-                        // FIXED: Only create new tasks if we have NO movement tasks
+                        // Create path following tasks if we don't have enough
                         var movementTaskCount = tasks.Count(t => t.Type == TaskNodeType.Movement);
-                        if (movementTaskCount == 0)
+                        if (movementTaskCount < 3) // Always maintain 3+ movement tasks
                         {
                             CreatePathFollowingTasks();
                         }
@@ -679,9 +628,16 @@ public class AutoPilot
                             Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         }
                         
-                        if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
+                        // FIXED: Smaller completion distance for precise following
+                        if (taskDistance <= 35f) // Much smaller than before
+                        {
                             tasks.RemoveAt(0);
-                        yield return null;
+                            
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"Completed movement task - {tasks.Count(t => t.Type == TaskNodeType.Movement)} movement tasks remaining");
+                            }
+                        }
                         yield return null;
                         continue;
                         
