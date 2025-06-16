@@ -50,6 +50,23 @@ public class AutoPilotSettings
         public RangeNode<int> TaskLineWidth { get; set; } = new(3, 0, 10);
         public ColorNode TaskLineColor { get; set; } = new(System.Drawing.Color.Green.ToSharpDx());
     }
+
+    public DashSettings Dash { get; set; } = new();
+
+    [Submenu(CollapsedByDefault = true)]
+    public class DashSettings
+    {
+        public RangeNode<int> TerrainValueForCollision { get; set; } = new(2, 0, 5);
+        
+        [Menu("Minimum Dash Distance")]
+        public RangeNode<int> DashMinDistance { get; set; } = new(10, 0, 1000);
+        
+        [Menu("Maximum Dash Distance")]
+        public RangeNode<int> DashMaxDistance { get; set; } = new(200, 0, 1000);
+        
+        [Menu("Heuristic Distance (when no terrain data)")]
+        public RangeNode<int> HeuristicThreshold { get; set; } = new(100, 50, 500);
+    }
 }
 
 [Submenu(CollapsedByDefault = true)]

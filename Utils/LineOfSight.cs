@@ -15,7 +15,7 @@ namespace AreWeThereYet.Utils
     public class LineOfSight
     {
         private readonly GameController _gameController;
-        private int[][] _terrainData;
+        public int[][] _terrainData;
         private Vector2i _areaDimensions;
         
         // Periodic refresh for dynamic door detection
@@ -121,103 +121,85 @@ namespace AreWeThereYet.Utils
         }
 
         /// <summary>
-        /// Enhanced terrain data loading - manual memory reading for real-time updates
+        /// Enhanced terrain data loading - usin new "per-frame cached terrain data"
         /// </summary>
         private void UpdateTerrainData()
         {
             try
             {
-                // Use manual memory reading approach for real-time updates
-                var terrain = _gameController.IngameState.Data.Terrain;
-
-                if (terrain.LayerMelee.First == IntPtr.Zero || terrain.LayerRanged.First == IntPtr.Zero)
+                if (_gameController?.IngameState?.Data == null)
                 {
-                    // We can't proceed, so we ensure our own terrain data is null and exit.
                     _terrainData = null;
                     return;
                 }
 
-                // Read BOTH terrain layers manually (like the original approach)
-                var meleeBytes = _gameController.Memory.ReadBytes(terrain.LayerMelee.First, terrain.LayerMelee.Size);    // Dynamic walkability (doors)
-                var rangedBytes = _gameController.Memory.ReadBytes(terrain.LayerRanged.First, terrain.LayerRanged.Size); // Static ranged line-of-sight
+                // Get BOTH terrain data sources (TraceMyRay style)
+                var walkableData = _gameController.IngameState.Data.RawFramePathfindingData;     // Can walk?
+                var targetingData = _gameController.IngameState.Data.RawFrameTerrainTargetingData; // Can dash/shoot?
 
-                if (meleeBytes == null || rangedBytes == null)
+                if (walkableData == null || targetingData == null || walkableData.Length == 0)
                 {
-                    AreWeThereYet.Instance.LogError("LineOfSight: One or both terrain byte arrays are null");
+                    _terrainData = null;
                     return;
                 }
 
-                // Calculate terrain dimensions
-                var numCols = (int)(terrain.NumCols - 1) * 23;
-                var numRows = (int)(terrain.NumRows - 1) * 23;
-                if ((numCols & 1) > 0) numCols++;
-
-                // Initialize combined terrain data
-                _terrainData = new int[numRows][];
-
-                for (var y = 0; y < numRows; y++)
+                // Create combined terrain data
+                _terrainData = new int[walkableData.Length][];
+                for (var y = 0; y < walkableData.Length; y++)
                 {
-                    _terrainData[y] = new int[numCols];
-                    var dataIndex = y * terrain.BytesPerRow;
-
-                    for (var x = 0; x < numCols; x += 2)
+                    _terrainData[y] = new int[walkableData[y].Length];
+                    
+                    for (var x = 0; x < walkableData[y].Length; x++)
                     {
-                        // LAYER 1: Basic terrain (LayerMelee) - dynamic walkability
-                        var meleeB = meleeBytes[dataIndex + (x >> 1)];
-                        var melee1 = (meleeB & 0xf) > 0 ? 5 : 0;  // 5=walkable, 0=blocked
-                        var melee2 = (meleeB >> 4) > 0 ? 5 : 0;
-
-                        // LAYER 2: Static objects (LayerRanged) - dashable objects
-                        var rangedB = rangedBytes[dataIndex + (x >> 1)];
-                        var ranged1 = (rangedB & 0xf) > 3 ? 2 : 0;  // 2=dashable, 0=blocked
-                        var ranged2 = (rangedB >> 4) > 3 ? 2 : 0;
-
-                        // COMBINE LAYERS
-                        _terrainData[y][x] = CombineTerrainLayers(melee1, ranged1);
-                        if (x + 1 < numCols)
-                            _terrainData[y][x + 1] = CombineTerrainLayers(melee2, ranged2);
+                        var walkable = walkableData[y][x];
+                        var targeting = targetingData[y][x];
+                        
+                        // COMBINE into three clear states
+                        _terrainData[y][x] = CombineTerrainLayers(walkable, targeting);
                     }
                 }
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
-                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Manual terrain data - Melee: {meleeBytes.Length} bytes, Ranged: {rangedBytes.Length} bytes, Grid: {numCols}x{numRows}");
+                    AreWeThereYet.Instance.LogMessage($"LineOfSight: Combined terrain data - Grid: {walkableData[0].Length}x{walkableData.Length}");
                 }
             }
             catch (Exception ex)
             {
                 AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
-                _terrainData = null; // Invalidate our data on any exception
+                _terrainData = null;
             }
         }
 
         /// <summary>
         /// Terrain combination logic for real-time door detection
+        /// Terrain value system that works with real-time updates:
+        /// 0 = Impassable (walls, void, closed doors) - blocks everything
+        /// 2 = Dashable/teleportable (can shoot through, can dash through)  
+        /// 5 = Fully walkable (open areas, open doors)
         /// </summary>
-        private int CombineTerrainLayers(int meleeValue, int rangedValue)
+        private int CombineTerrainLayers(int walkableValue, int targetingValue)
         {
-            // Terrain value system that works with real-time updates:
-            // 0 = Impassable (walls, closed doors)
-            // 2 = Dashable/teleportable (can shoot through, can dash through)  
-            // 5 = Fully walkable (open areas, open doors)
-
-            if (meleeValue == 5)  // Physical walkability takes priority
-            {
-                return 5;  // Fully walkable (open doors, clear paths)
-            }
-            else if (meleeValue == 0)  // Terrain blocked
-            {
-                if (rangedValue == 2)  // But ranged attacks can pass through
-                {
-                    return 2;  // Dashable/teleportable (closed doors you can dash through)
-                }
-                else
-                {
-                    return 0;  // Completely impassable (solid walls, closed doors)
-                }
-            }
+            // WALKABLE LAYER: 5,4,3,2,1 = walkable levels, 0 = blocked
+            // TARGETING LAYER: 5 = clear line of sight, 4,3,2,1 = blocked by threshold, 0 = fully blocked
             
-            return 1;  // Default fallback
+            var threshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.TerrainValueForCollision.Value;
+
+            if (walkableValue >= 1 && targetingValue >= threshold)
+            {
+                // Can walk AND clear line of sight = fully accessible
+                return 5;
+            }
+            else if (walkableValue == 0 && targetingValue >= threshold)
+            {
+                // Can't walk BUT can dash/shoot through = dashable obstacle
+                return 2;
+            }
+            else
+            {
+                // Everything else = completely impassable
+                return 0; // Fully blocked
+            }
         }
 
         /// <summary>
@@ -225,19 +207,33 @@ namespace AreWeThereYet.Utils
         /// </summary>
         public bool HasLineOfSight(Vector2 start, Vector2 end)
         {
-            if (_terrainData == null) return false;
+            try
+            {
+                // Enhanced validation
+                if (_terrainData == null || _terrainData.Length == 0)
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        AreWeThereYet.Instance.LogMessage("LineOfSight: Terrain data not available");
+                    return true; // Conservative fallback
+                }
 
-            // Force refresh check before critical pathfinding decisions
-            RefreshTerrainData();
+                // Force refresh check before critical pathfinding decisions
+                RefreshTerrainData();
 
-            // Update debug visualization
-            _debugVisiblePoints.Clear();
-            UpdateDebugGrid(start);
+                // Update debug visualization
+                _debugVisiblePoints.Clear();
+                UpdateDebugGrid(start);
 
-            var isVisible = HasLineOfSightInternal(start, end);
-            _debugRays.Add((start, end, isVisible));
+                var isVisible = HasLineOfSightInternal(start, end);
+                _debugRays.Add((start, end, isVisible));
 
-            return isVisible;
+                return isVisible;
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"HasLineOfSight failed: {ex.Message}");
+                return true; // Conservative fallback - assume line of sight when terrain check fails
+            }
         }
 
         /// <summary>
@@ -341,28 +337,11 @@ namespace AreWeThereYet.Utils
         private bool IsTerrainPassable(Vector2 pos)
         {
             var terrainValue = GetTerrainValue(pos);
-            
-            switch (terrainValue)
-            {
-                case 0:  // Impassable walls/void
-                    return false;
+            var threshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.TerrainValueForCollision.Value;
+            if (terrainValue < 0) return false; // Out of bounds
 
-                case 2:  // Static objects (doors, chests, decorations) - dashable
-                        // Only passable if dash is enabled, otherwise block
-                    return AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true;
-
-                case 1:  // Basic walkable terrain - ??? i guess
-                case 5:  // Open walkable space
-                    return true;  // Always passable
-
-                case 3:  // Reserved terrain type
-                case 4:  // Reserved terrain type
-                    return true;  // Conservative - assume passable for now
-
-                default:
-                    // Unknown terrain values - conservative approach
-                    return terrainValue > 2;  // Block low values, allow high values
-            }
+            // TraceMyRay logic: terrain values <= threshold block line of sight
+            return terrainValue >= threshold;
         }
 
 
@@ -533,16 +512,38 @@ namespace AreWeThereYet.Utils
 
         private bool IsInBounds(int x, int y)
         {
-            return x >= 0 && x < _areaDimensions.X && y >= 0 && y < _areaDimensions.Y;
+            // Check against actual terrain data dimensions, not area dimensions
+            if (_terrainData == null || _terrainData.Length == 0) 
+                return false;
+                
+            return x >= 0 && y >= 0 && y < _terrainData.Length && x < _terrainData[y].Length;
         }
+
 
         private int GetTerrainValue(Vector2 position)
         {
-            var x = (int)position.X;
-            var y = (int)position.Y;
+            try
+            {
+                var x = (int)position.X;
+                var y = (int)position.Y;
 
-            if (!IsInBounds(x, y)) return -1;
-            return _terrainData[y][x];
+                // Enhanced bounds checking with null safety
+                if (_terrainData == null || _terrainData.Length == 0)
+                    return -1;
+                    
+                if (y < 0 || y >= _terrainData.Length)
+                    return -1;
+                    
+                if (_terrainData[y] == null || x < 0 || x >= _terrainData[y].Length)
+                    return -1;
+
+                return _terrainData[y][x];
+            }
+            catch (Exception ex)
+            {
+                AreWeThereYet.Instance.LogError($"GetTerrainValue failed at ({position.X:F1}, {position.Y:F1}): {ex.Message}");
+                return -1;
+            }
         }
 
         public void Clear()

@@ -465,7 +465,7 @@ public class AutoPilot
                 switch (currentTask.Type)
                 {
                     case TaskNodeType.Movement:
-                        if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled &&
+                        if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value &&
                         ShouldUseDash(currentTask.WorldPosition.WorldToGrid()))
                         {
                             yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
@@ -614,28 +614,74 @@ public class AutoPilot
     {
         try
         {
-            // Add comprehensive null checks like CoPilot
-            if (LineOfSight == null || 
-                AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
-                AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
+            // Comprehensive null checks
+            if (LineOfSight == null)
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage("ShouldUseDash: LineOfSight is null");
                 return false;
+            }
+            
+            if (AreWeThereYet.Instance?.GameController?.Player?.GridPos == null)
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage("ShouldUseDash: Player GridPos is null");
+                return false;
+            }
+            
+            if (AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage("ShouldUseDash: Dash not enabled in settings");
+                return false;
+            }
 
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
             var distance = Vector2.Distance(playerPos, targetPosition);
             
-            // Don't dash for very short or very long distances
-            if (distance < 30 || distance > 150)
+            // FIXED: Use configurable distance ranges instead of hardcoded values
+            var minDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMinDistance.Value;
+            var maxDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMaxDistance.Value;
+            
+            if (distance < minDistance || distance > maxDistance)
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: Distance {distance:F1} outside dash range ({minDistance}-{maxDistance})");
                 return false;
+            }
             
             // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
             var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
             var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
 
-            // This is where exceptions were crashing your coroutine
-            var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
+            // FIXED: Handle terrain data unavailable properly with configurable heuristic
+            bool hasLineOfSight;
+            if (LineOfSight._terrainData == null)
+            {
+                // When no terrain data, use configurable heuristic threshold
+                var heuristicThreshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.HeuristicThreshold.Value;
+                hasLineOfSight = distance < heuristicThreshold; // Heuristic: close = clear, far = blocked
+                
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: No terrain data, using heuristic threshold {heuristicThreshold} - hasLineOfSight: {hasLineOfSight}");
+            }
+            else
+            {
+                hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
+                
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: Terrain check - hasLineOfSight: {hasLineOfSight}");
+            }
             
-            // Dash when there's NO line of sight (obstacles in the way)
-            return !hasLineOfSight && distance >= 50;
+            // Dash when there's NO line of sight (obstacles in the way) and within distance range
+            var shouldDash = !hasLineOfSight && distance >= minDistance;
+            
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, hasLineOfSight: {hasLineOfSight}, range: {minDistance}-{maxDistance})");
+            }
+            
+            return shouldDash;
         }
         catch (Exception ex)
         {
