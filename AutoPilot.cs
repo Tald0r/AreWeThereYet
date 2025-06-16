@@ -30,11 +30,7 @@ public class AutoPilot
     private string _lastKnownLeaderZone = "";
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
 
-    //Leader path tracking
-    private readonly List<Vector3> _leaderPathHistory = new List<Vector3>();
-    private Vector3 _lastRecordedLeaderPos = Vector3.Zero;
-    private DateTime _lastLeaderPosUpdate = DateTime.MinValue;
-    private const float LEADER_BREADCRUMB_DISTANCE = 50f; // INCREASED to reduce spam
+
     private const int MAX_BREADCRUMBS = 20; // REDUCED to prevent memory issues
 
     private void ResetPathing()
@@ -101,141 +97,33 @@ public class AutoPilot
         }
     }
 
-    /// <summary>
-    /// Record leader's movement path for us to follow
-    /// </summary>
-    private void RecordLeaderPath(Vector3 leaderPos)
+    private void AddBreadcrumbTask(Vector3 leaderPos)
     {
         try
         {
-            // Only record new breadcrumb if leader moved enough distance
-            var distanceMoved = Vector3.Distance(_lastRecordedLeaderPos, leaderPos);
-            
-            if (distanceMoved >= LEADER_BREADCRUMB_DISTANCE || _lastRecordedLeaderPos == Vector3.Zero)
+            const float LEADER_BREADCRUMB_DISTANCE = 50f; // Distance before dropping a new breadcrumb
+
+            // Find the position of the very last movement task in our queue.
+            // If there are no tasks, use the bot's last known position.
+            var lastBreadcrumbPos = tasks.LastOrDefault(t => t.Type == TaskNodeType.Movement)?.WorldPosition ?? lastPlayerPosition;
+
+            // Only add a new breadcrumb if the leader has moved far enough from the last one.
+            if (Vector3.Distance(leaderPos, lastBreadcrumbPos) >= LEADER_BREADCRUMB_DISTANCE)
             {
-                _leaderPathHistory.Add(leaderPos);
-                _lastRecordedLeaderPos = leaderPos;
-                _lastLeaderPosUpdate = DateTime.Now;
-                
-                // ADDED: Clean up completed breadcrumbs regularly
-                CleanupCompletedBreadcrumbs();
-                
+                // The completion bound (35) should match the distance check in the task execution logic.
+                tasks.Add(new TaskNode(leaderPos, 35, TaskNodeType.Movement));
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
-                    AreWeThereYet.Instance.LogMessage($"Recorded leader breadcrumb #{_leaderPathHistory.Count} at distance {distanceMoved:F1}");
+                    AreWeThereYet.Instance.LogMessage($"Added breadcrumb. Total movement tasks: {tasks.Count(t => t.Type == TaskNodeType.Movement)}");
                 }
             }
         }
         catch (Exception ex)
         {
-            AreWeThereYet.Instance.LogError($"RecordLeaderPath failed: {ex.Message}");
+            AreWeThereYet.Instance.LogError($"AddBreadcrumbTask failed: {ex.Message}");
         }
     }
-
-    /// <summary>
-    /// FIXED: Create multiple sequential breadcrumb tasks like a GPS route
-    /// </summary>
-    private void CreatePathFollowingTasks()
-    {
-        try
-        {
-            // NEVER clear existing movement tasks unless they're wrong
-            // Only create tasks if we have very few
-            var currentMovementTasks = tasks.Where(t => t.Type == TaskNodeType.Movement).ToList();
-            
-            if (_leaderPathHistory.Count == 0)
-            {
-                if (followTarget != null && currentMovementTasks.Count == 0)
-                {
-                    tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
-                }
-                return;
-            }
-            
-            // FIXED: Only create tasks if we need more
-            if (currentMovementTasks.Count >= 3) return; // Already have enough tasks
-            
-            var playerPos = AreWeThereYet.Instance.playerPosition;
-            
-            // Find which breadcrumbs we haven't created tasks for yet
-            var taskPositions = currentMovementTasks.Select(t => t.WorldPosition).ToList();
-            var tasksToCreate = new List<Vector3>();
-            
-            foreach (var breadcrumb in _leaderPathHistory)
-            {
-                // Check if we already have a task for this breadcrumb
-                var hasTaskForBreadcrumb = taskPositions.Any(taskPos => Vector3.Distance(taskPos, breadcrumb) < 30f);
-                
-                if (!hasTaskForBreadcrumb)
-                {
-                    tasksToCreate.Add(breadcrumb);
-                    if (tasksToCreate.Count >= 5) break; // Limit to next 5 breadcrumbs
-                }
-            }
-            
-            // Create tasks for new breadcrumbs in order
-            foreach (var breadcrumb in tasksToCreate)
-            {
-                tasks.Add(new TaskNode(breadcrumb, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
-            }
-            
-            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true && tasksToCreate.Count > 0)
-            {
-                AreWeThereYet.Instance.LogMessage($"Created {tasksToCreate.Count} sequential breadcrumb tasks - Total tasks: {tasks.Count(t => t.Type == TaskNodeType.Movement)}");
-            }
-        }
-        catch (Exception ex)
-        {
-            AreWeThereYet.Instance.LogError($"CreatePathFollowingTasks failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// FIXED: Only remove breadcrumbs when bot actually passes through them
-    /// </summary>
-    private void CleanupCompletedBreadcrumbs()
-    {
-        try
-        {
-            if (_leaderPathHistory.Count == 0) return;
-            
-            var playerPos = AreWeThereYet.Instance.playerPosition;
-            var completionDistance = 25f; // Smaller distance - must actually reach the breadcrumb
-            
-            // Only remove breadcrumbs from the FRONT that have been actually reached
-            while (_leaderPathHistory.Count > 0)
-            {
-                var firstBreadcrumb = _leaderPathHistory[0];
-                var distanceToFirst = Vector3.Distance(playerPos, firstBreadcrumb);
-                
-                if (distanceToFirst <= completionDistance)
-                {
-                    _leaderPathHistory.RemoveAt(0);
-                    
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage($"REACHED breadcrumb - {_leaderPathHistory.Count} remaining in path");
-                    }
-                }
-                else
-                {
-                    break; // First breadcrumb not reached yet, stop checking
-                }
-            }
-            
-            // Limit total breadcrumbs to prevent memory issues
-            if (_leaderPathHistory.Count > MAX_BREADCRUMBS)
-            {
-                var removeCount = _leaderPathHistory.Count - MAX_BREADCRUMBS;
-                _leaderPathHistory.RemoveRange(0, removeCount);
-            }
-        }
-        catch (Exception ex)
-        {
-            AreWeThereYet.Instance.LogError($"CleanupCompletedBreadcrumbs failed: {ex.Message}");
-        }
-    }
-
 
     private LabelOnGround GetBestPortalLabel(PartyElementWindow leaderPartyElement)
     {
@@ -244,7 +132,7 @@ public class AutoPilot
             var currentZoneName = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
             var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
             var realLevel = AreWeThereYet.Instance.GameController?.Area?.CurrentArea?.RealLevel ?? 0;
-            
+
             // Enhanced logic: differentiate between leveling zones and endgame content
             if (isHideout || realLevel >= 68)
             {
@@ -256,12 +144,12 @@ public class AutoPilot
                                 x.ItemOnGround.Metadata.ToLower().Contains("portal")))
                     .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
                     .ToList();
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"Endgame/Hideout portal search: Found {portalLabels?.Count ?? 0} portals");
                 }
-                
+
                 return isHideout && portalLabels?.Count > 0
                     ? portalLabels[random.Next(portalLabels.Count)] // Random portal in hideout
                     : portalLabels?.FirstOrDefault(); // Closest portal in endgame
@@ -277,7 +165,7 @@ public class AutoPilot
                             x.Label.Text.ToLower().Contains(leaderPartyElement.ZoneName.ToLower())) // IMPORTANT KEY IMPROVEMENT: Check portal text
                     .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
                     .ToList();
-                    
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     var allPortals = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
@@ -286,12 +174,12 @@ public class AutoPilot
                                 (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
                                     x.ItemOnGround.Metadata.ToLower().Contains("portal")))
                         .ToList();
-                        
+
                     AreWeThereYet.Instance.LogMessage($"Leveling zone portal search:");
                     AreWeThereYet.Instance.LogMessage($"  - Leader zone: '{leaderPartyElement.ZoneName}'");
                     AreWeThereYet.Instance.LogMessage($"  - All portals: {allPortals?.Count ?? 0}");
                     AreWeThereYet.Instance.LogMessage($"  - Matching portals: {portalLabels?.Count ?? 0}");
-                    
+
                     if (allPortals != null)
                     {
                         foreach (var portal in allPortals)
@@ -301,7 +189,7 @@ public class AutoPilot
                         }
                     }
                 }
-                
+
                 // EXPLICIT NULL CHECK: If no matching portals found in leveling zone, return null for teleport fallback
                 if (portalLabels == null || portalLabels.Count == 0)
                 {
@@ -311,7 +199,7 @@ public class AutoPilot
                     }
                     return null; // Force teleport button usage
                 }
-                
+
                 return portalLabels.FirstOrDefault(); // Return closest matching portal
             }
         }
@@ -509,85 +397,75 @@ public class AutoPilot
             }
             else if (followTarget != null)
             {
-                // Reset zone tracking when leader is found
+                // Reset zone tracking since we found the leader in our area.
                 _lastKnownLeaderZone = "";
                 _leaderZoneChangeTime = DateTime.MinValue;
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-                
-                if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+
+                // BEHAVIOR 1: We are FAR from the leader. Build the breadcrumb path.
+                if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                 {
-                    var distanceMoved = Vector3.Distance(lastTargetPosition, followTarget.Pos);
-                    if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
-                    {
-                        var transition = GetBestPortalLabel(leaderPartyElement);
-                        if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
-                            tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
-                    }
+                    // We are far away, so we add the leader's position as a breadcrumb to follow.
+                    AddBreadcrumbTask(followTarget.Pos);
                 }
+                // BEHAVIOR 2: We are CLOSE to the leader. Clear the path and follow directly.
                 else
                 {
-                    // FIXED: Much simpler task creation logic
-                    if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                    // Proximity Override: We are close to the leader.
+                    // Clear the entire breadcrumb path, as we don't need it anymore.
+                    var movementTaskCount = tasks.Count(t => t.Type == TaskNodeType.Movement);
+                    if (movementTaskCount > 0)
                     {
-                        // Always record leader's current position
-                        RecordLeaderPath(followTarget.Pos);
-                        
-                        // Create path following tasks if we don't have enough
-                        var movementTaskCount = tasks.Count(t => t.Type == TaskNodeType.Movement);
-                        if (movementTaskCount < 3) // Always maintain 3+ movement tasks
+                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            CreatePathFollowingTasks();
-                        }
-                    }
-                    else
-                    {
-                        // Close range - clear movement tasks, only use direct positioning for very close distances
-                        for (var i = tasks.Count - 1; i >= 0; i--)
-                            if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
-                                tasks.RemoveAt(i);
-                        yield return null;
-                        
-                        // Only create direct-line task for very close positioning (< KeepWithinDistance)
-                        if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value &&
-                            distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 0.8f)
-                        {
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                            AreWeThereYet.Instance.LogMessage($"Proximity override: Reached leader. Cleared {movementTaskCount} remaining breadcrumbs.");
                         }
                     }
                     
-                    var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
-                    if (!isHideout)
+                    // Also clear transition tasks, as we have arrived.
+                    tasks.RemoveAll(t => t.Type == TaskNodeType.Transition);
+
+                    // If "Close Follow" is on, add a single, direct task to maintain position.
+                    // This prevents the bot from just standing still when it gets close.
+                    if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value && !tasks.Any(t => t.Type == TaskNodeType.Movement))
                     {
-                        var questLoot = GetQuestItem();
-                        if (questLoot != null &&
-                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                                AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
-                            }
-                            tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
-                        }
-                        else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance, TaskNodeType.Movement));
+                    }
+                }
+                
+                var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+                if (!isHideout)
+                {
+                    var questLoot = GetQuestItem();
+                    if (questLoot != null &&
+                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
                             var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                            var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
-                            AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
+                            AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
                         }
-                        
-                        var mercenaryOptIn = GetMercenaryOptInButton();
-                        if (mercenaryOptIn != null &&
-                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
+                        tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+                    }
+                    else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                        var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
+                        AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
+                    }
+                    
+                    var mercenaryOptIn = GetMercenaryOptInButton();
+                    if (mercenaryOptIn != null &&
+                        Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                        tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
-                            }
-                            tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
+                            AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
                         }
+                        tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                     }
                 }
                 if (followTarget?.Pos != null)
