@@ -1,5 +1,6 @@
 using ExileCore.PoEMemory.Elements;
 using SharpDX;
+using System;
 
 namespace AreWeThereYet;
 
@@ -28,12 +29,15 @@ public class TaskNode
     /// </summary>
     public int AttemptCount { get; set; }
     public LabelOnGround LabelOnGround { get; set; }
+    
+    public DateTime CreationTime { get; }
 
     public TaskNode(Vector3 position, int bounds, TaskNodeType type = TaskNodeType.Movement)
     {
         WorldPosition = position;
         Type = type;
         Bounds = bounds;
+        CreationTime = DateTime.Now;
     }
 
     public TaskNode(LabelOnGround labelOnGround, int bounds, TaskNodeType type = TaskNodeType.Movement)
@@ -42,6 +46,7 @@ public class TaskNode
         WorldPosition = labelOnGround.ItemOnGround.Pos;
         Type = type;
         Bounds = bounds;
+        CreationTime = DateTime.Now;
     }
 }
 
