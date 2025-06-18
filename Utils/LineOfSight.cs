@@ -15,7 +15,7 @@ namespace AreWeThereYet.Utils
     public class LineOfSight
     {
         private readonly GameController _gameController;
-        public int[][] _terrainData;
+        public volatile int[][] _terrainData;
         private Vector2i _areaDimensions;
         
         // Periodic refresh for dynamic door detection
@@ -286,6 +286,8 @@ namespace AreWeThereYet.Utils
         /// </summary>
         private bool HasLineOfSightInternal(Vector2 start, Vector2 end)
         {
+            if (_terrainData == null) return false;
+            
             var startX = (int)start.X;
             var startY = (int)start.Y;
             var endX = (int)end.X;

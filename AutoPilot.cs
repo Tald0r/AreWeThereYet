@@ -371,10 +371,10 @@ public class AutoPilot
             // =================================================================
             // This section decides WHAT to do (add breadcrumbs, find portals, etc.)
 
-            // Case 1: Leader is in another zone.
+            // Case 1: Leader is in another zone. Find a portal or TP.
             if (followTarget == null && leaderPartyElement != null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
             {
-                // Track zone changes for buffer timing
+                // This is your existing, correct logic for zone transitions.
                 if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
                 {
                     // Leader zone changed - start buffer timer
@@ -448,7 +448,7 @@ public class AutoPilot
                     yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
                 }
             }
-            // Case 2: Leader is in the same zone.
+            // Case 2: Leader is in the same zone. Decide whether to build a path or stand still.
             else if (followTarget != null)
             {
                 // Reset zone tracking since we found the leader in our area.
@@ -456,50 +456,54 @@ public class AutoPilot
                 _leaderZoneChangeTime = DateTime.MinValue;
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
 
-                // If FAR from leader -> Add breadcrumbs.
+                // ** THE CRITICAL FIX IS HERE **
+                // If FAR from leader -> Add breadcrumbs to the path.
                 if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                 {
                     // We are far away, so we add the leader's position as a breadcrumb to follow.
                     AddBreadcrumbTask(followTarget.Pos);
                 }
-                // If CLOSE to leader -> Clear breadcrumbs and switch to close follow.
+                // If CLOSE to leader -> Clear the path and do nothing, restoring the desired behavior.
                 else
                 {
                     tasks.RemoveAll(t => t.Type == TaskNodeType.Movement || t.Type == TaskNodeType.Transition);
-                    if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value && !tasks.Any(t => t.Type == TaskNodeType.Movement))
-                    {
-                        tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Movement));
-                    }
+                    // The "CloseFollow" logic is now handled by the idle state, which is more robust.
                 }
 
-                // (Your existing quest/mercenary logic here. No changes needed.)
+                // Your quest/mercenary logic remains correct.
                 var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
                 if (!isHideout)
                 {
-                    var questLoot = GetQuestItem();
-                    if (questLoot != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value && !tasks.Any(t => t.Type == TaskNodeType.Loot))
+                    if (!tasks.Any(t => t.Type == TaskNodeType.Loot))
                     {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        var questLoot = GetQuestItem();
+                        if (questLoot != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                            }
+                            tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.Loot));
+                        }
+                        else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
                             var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                            AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                            var hasLootTask = !tasks.Any(t => t.Type == TaskNodeType.Loot);
+                            AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
                         }
-                        tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.Loot));
                     }
-                    else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    if (!tasks.Any(t => t.Type == TaskNodeType.MercenaryOptIn))
                     {
-                        var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                        var hasLootTask = !tasks.Any(t => t.Type == TaskNodeType.Loot);
-                        AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
-                    }
-                    var mercenaryOptIn = GetMercenaryOptInButton();
-                    if (mercenaryOptIn != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value && !tasks.Any(t => t.Type == TaskNodeType.MercenaryOptIn))
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        var mercenaryOptIn = GetMercenaryOptInButton();
+                        if (mercenaryOptIn != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                         {
-                            AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                            }
+                            tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.MercenaryOptIn));
                         }
-                        tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.MercenaryOptIn));
                     }
                 }
                 if (followTarget?.Pos != null)
@@ -507,7 +511,7 @@ public class AutoPilot
             }
 
             // =================================================================
-            // SECTION 3: TASK EXECUTION STATE MACHINE
+            // SECTION 3: TASK EXECUTION STATE MACHINE (with Dash logic restored)
             // =================================================================
             // This section executes whatever task is at the front of the queue.
 
@@ -653,7 +657,7 @@ public class AutoPilot
             else if (movementTasks.Any())
             {
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
-                
+
                 // If there's nowhere to go, stop moving.
                 if (targetWaypoint == null)
                 {
@@ -665,7 +669,7 @@ public class AutoPilot
                     yield return new WaitTime(100);
                     continue;
                 }
-                
+
                 // Check if we should dash to the next waypoint.
                 bool canDash = AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value &&
                                 ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
@@ -679,7 +683,7 @@ public class AutoPilot
                         isMoveKeyPressed = false;
                         yield return new WaitTime(50); // Brief pause to ensure key release is registered.
                     }
-                    
+
                     // Aim and press the dash key.
                     yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(targetWaypoint.WorldPosition));
                     Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.DashKey);
@@ -719,7 +723,7 @@ public class AutoPilot
                     isMoveKeyPressed = false;
                 }
             }
-            
+
             lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
             yield return new WaitTime(50);
         }
