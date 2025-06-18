@@ -665,6 +665,53 @@ public class AutoPilot
             // --- STATE 2: Handle Continuous Movement ---
             else if (movementTasks.Any())
             {
+                // =====================================================================
+                // TIER 1: DIRECT LEADER OVERRIDE (THE NEW LOGIC)
+                // =====================================================================
+                // Check if we can just go straight to the leader, ignoring the breadcrumbs.
+                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                
+                // Define a reasonable "direct follow" range (e.g., half the screen or ~400 units)
+                const float DIRECT_FOLLOW_RANGE = 400f; 
+
+                if (distanceToLeader < DIRECT_FOLLOW_RANGE && LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid(), followTarget.Pos.WorldToGrid()))
+                {
+                    // We can see the leader and they are close enough! Abandon the old path.
+                    if (movementTasks.Count > 1) // Only log if we are actually skipping something
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"Leader is visible and close. Clearing {movementTasks.Count} breadcrumbs and moving directly.");
+                        }
+                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                    }
+
+                    // Add a single, direct task to the leader's position.
+                    if (!tasks.Any(t => t.Type == TaskNodeType.Movement))
+                    {
+                        tasks.Add(new TaskNode(followTarget.Pos, 40, TaskNodeType.Movement));
+                    }
+                }
+                
+                // Re-fetch the task list in case we just cleared it.
+                movementTasks = tasks.Where(t => t.Type == TaskNodeType.Movement).ToList();
+                if (!movementTasks.Any())
+                {
+                    // If we cleared the tasks, we need to stop moving for this frame and re-evaluate.
+                    if (isMoveKeyPressed)
+                    {
+                        Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                        isMoveKeyPressed = false;
+                    }
+                    yield return new WaitTime(50);
+                    continue;
+                }
+
+
+                // =====================================================================
+                // TIER 2 & 3: SMART TRAIN / STRICT FOLLOWING
+                // =====================================================================
+                // If the direct override didn't trigger, proceed with path following.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
                 // If there's nowhere to go, stop moving.
@@ -679,10 +726,10 @@ public class AutoPilot
                     continue;
                 }
 
-                // Check if we should dash to the next waypoint.
+                // Check if we should dash to this specific waypoint.
                 bool canDash = AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value &&
-                                ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
-                
+                            ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
+
                 if (canDash)
                 {
                     // DASHING: Release the move key and perform a dash.
@@ -709,13 +756,13 @@ public class AutoPilot
                     // STEER: Continuously aim the mouse at the target waypoint.
                     yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(targetWaypoint.WorldPosition));
                 }
-                
-                // CLEANUP (This runs after either a dash or a move update)
-                // If we are close to the *first* point in our list, we can remove it.
-                var distanceToFirstNode = Vector3.Distance(AreWeThereYet.Instance.playerPosition, movementTasks.First().WorldPosition);
+
+                // CLEANUP
+                var firstNode = movementTasks.First();
+                var distanceToFirstNode = Vector3.Distance(AreWeThereYet.Instance.playerPosition, firstNode.WorldPosition);
                 if (distanceToFirstNode <= 40f) // Completion radius
                 {
-                    tasks.Remove(movementTasks.First());
+                    tasks.Remove(firstNode);
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
                         AreWeThereYet.Instance.LogMessage($"Consumed breadcrumb. {tasks.Count(t => t.Type == TaskNodeType.Movement)} remaining.");
