@@ -8,14 +8,14 @@ public static class Helper
 {
     internal static Random random = new Random();
     private static Camera Camera => AreWeThereYet.Instance.GameController.Game.IngameState.Camera;
-        
+
     internal static float MoveTowards(float cur, float tar, float max)
     {
         if (Math.Abs(tar - cur) <= max)
             return tar;
         return cur + Math.Sign(tar - cur) * max;
     }
-    
+
     internal static Vector2 WorldToValidScreenPosition(Vector3 worldPos)
     {
         var windowRect = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle();
@@ -31,5 +31,10 @@ public static class Helper
             if (result.Y > windowRect.BottomRight.Y) result.Y = windowRect.BottomRight.Y - edgeBounds;
         }
         return result;
+    }
+
+    public static System.Numerics.Vector2 ToNumerics(this SharpDX.Vector2 dxVector)
+    {
+        return new System.Numerics.Vector2(dxVector.X, dxVector.Y);
     }
 }

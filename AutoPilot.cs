@@ -148,7 +148,7 @@ public class AutoPilot
             var potentialShortcut = path[i];
             
             // Use the built-in .WorldToGrid() extension method for clean conversion.
-            if (LineOfSight.HasLineOfSight(playerPos.WorldToGrid(), potentialShortcut.WorldPosition.WorldToGrid()))
+            if (LineOfSight.HasLineOfSight(playerPos.WorldToGrid().ToNumerics(), potentialShortcut.WorldPosition.WorldToGrid().ToNumerics()))
             {
                 // We found a valid shortcut! This is our new target.
                 bestTarget = potentialShortcut;
@@ -674,7 +674,7 @@ public class AutoPilot
                 // Define a reasonable "direct follow" range (e.g., half the screen or ~400 units)
                 const float DIRECT_FOLLOW_RANGE = 400f; 
 
-                if (distanceToLeader < DIRECT_FOLLOW_RANGE && LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid(), followTarget.Pos.WorldToGrid()))
+                if (distanceToLeader < DIRECT_FOLLOW_RANGE && LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics()))
                 {
                     // We can see the leader and they are close enough! Abandon the old path.
                     if (movementTasks.Count > 1) // Only log if we are actually skipping something
