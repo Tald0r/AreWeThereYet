@@ -373,7 +373,6 @@ public class AutoPilot
                 yield return new WaitTime(100);
                 continue;
             }
-
             var ingameUi = AreWeThereYet.Instance.GameController.IngameState.IngameUi;
             if (new List<Element> { ingameUi.TreePanel, ingameUi.AtlasTreePanel, ingameUi.OpenLeftPanel, ingameUi.OpenRightPanel, ingameUi.InventoryPanel, ingameUi.SettingsPanel, ingameUi.ChatPanel.Children.FirstOrDefault() }.Any(panel => panel != null && panel.IsVisible))
             {
@@ -389,7 +388,7 @@ public class AutoPilot
             // SECTION 2: TASK GENERATION LOGIC (with Portal Memory)
             // =================================================================
             // This section decides WHAT to do (add breadcrumbs, find portals, etc.)
-        
+
             // --- NEW CASE 1.5: We have a portal memory and the leader has just zoned. Follow them! ---
             if (followTarget == null && _lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
             {
@@ -409,7 +408,6 @@ public class AutoPilot
             // Case 1: Leader is in a different zone (standard TP/portal logic).
             else if (followTarget == null && leaderPartyElement != null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
             {
-                // This is your existing, correct logic for zone transitions.
                 if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
                 {
                     // Leader zone changed - start buffer timer
@@ -473,13 +471,13 @@ public class AutoPilot
                     // Leader zone info not reliable yet, wait for it to stabilize
                     var timeSinceChange = DateTime.Now - _leaderZoneChangeTime;
                     var bufferTime = TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.ZoneUpdateBuffer?.Value ?? 2000);
-                    
+
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
                         var remaining = bufferTime - timeSinceChange;
                         AreWeThereYet.Instance.LogMessage($"Zone info not reliable yet - waiting {remaining.TotalMilliseconds:F0}ms more (Current: '{leaderPartyElement.ZoneName}')");
                     }
-                    
+
                     yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
                 }
             }
@@ -488,19 +486,12 @@ public class AutoPilot
             {
                 // --- NEW LOGIC: Record when the leader targets a portal ---
                 var leaderActor = followTarget.GetComponent<Actor>();
-                if (leaderActor?.CurrentAction?.Target != null)
+                if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                 {
-                    var target = leaderActor.CurrentAction.Target;
-                    if (target.Type == EntityType.AreaTransition || target.Type == EntityType.Portal || target.Type == EntityType.TownPortal)
-                    {
-                        _lastKnownLeaderPortal = target;
-                    }
+                    _lastKnownLeaderPortal = target;
                 }
 
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-
-                // ** THE CRITICAL FIX IS HERE **
-                // If FAR from leader -> Add breadcrumbs to the path.
                 if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                 {
                     // We are far away, so we add the leader's position as a breadcrumb to follow.
@@ -509,11 +500,8 @@ public class AutoPilot
                 // If CLOSE to leader -> Clear the path and do nothing, restoring the desired behavior.
                 else
                 {
-                    tasks.RemoveAll(t => t.Type == TaskNodeType.Movement || t.Type == TaskNodeType.Transition);
-                    // The "CloseFollow" logic is now handled by the idle state, which is more robust.
+                    tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
                 }
-
-                // Your quest/mercenary logic remains correct.
                 var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
                 if (!isHideout)
                 {
@@ -699,70 +687,10 @@ public class AutoPilot
             // --- STATE 2: Handle Continuous Movement ---
             else if (movementTasks.Any())
             {
-                // =====================================================================
-                // TIER 1: DIRECT LEADER OVERRIDE (THE NEW LOGIC)
-                // =====================================================================
-                
-                // Check if we can just go straight to the leader, ignoring the breadcrumbs.
-                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-                
-                // Define a reasonable "direct follow" range (e.g., half the screen or ~400 units)
-                const float DIRECT_FOLLOW_RANGE = 400f; 
-                const int MAX_TASKS_FOR_OVERRIDE = 3;
-
-                if (followTarget != null &&
-                    movementTasks.Count < MAX_TASKS_FOR_OVERRIDE &&
-                    distanceToLeader < DIRECT_FOLLOW_RANGE)
-                {
-                    // Check LoS separately so we can log it.
-                    bool hasDirectLoS = LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics());
-
-                    if (hasDirectLoS)
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[OVERRIDE TRIGGERED] Leader is visible (LoS: {hasDirectLoS}) and close ({distanceToLeader:F1}). Clearing {movementTasks.Count} breadcrumbs.", 5, Color.Aqua);
-                        }
-                        // We can see the leader and they are close enough! Abandon the old path.
-                        if (movementTasks.Count > 1) // Only log if we are actually skipping something
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage($"Leader is visible and close. Clearing {movementTasks.Count} breadcrumbs and moving directly.");
-                            }
-                            tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
-                        }
-
-                        // Add a single, direct task to the leader's position.
-                        if (!tasks.Any(t => t.Type == TaskNodeType.Movement))
-                        {
-                            tasks.Add(new TaskNode(followTarget.Pos, 40, TaskNodeType.Movement));
-                        }
-                    }
-                }
-                
-                // Re-fetch the task list in case we just cleared it.
-                movementTasks = tasks.Where(t => t.Type == TaskNodeType.Movement).ToList();
-                if (!movementTasks.Any())
-                {
-                    // If we cleared the tasks, we need to stop moving for this frame and re-evaluate.
-                    if (isMoveKeyPressed)
-                    {
-                        Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                        isMoveKeyPressed = false;
-                    }
-                    yield return new WaitTime(50);
-                    continue;
-                }
-
-                // =====================================================================
-                // TIER 2 & 3: SMART TRAIN / STRICT FOLLOWING
-                // =====================================================================
-                
-                // If the direct override didn't trigger, proceed with path following.
+                // MOVEMENT LOGIC: We REMOVED the conflicting Tier 1 override.
+                // We now ONLY use the "Smart Train" logic.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
-                // If there's nowhere to go, stop moving.
                 if (targetWaypoint == null)
                 {
                     if (isMoveKeyPressed)
@@ -785,7 +713,7 @@ public class AutoPilot
                     {
                         Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         isMoveKeyPressed = false;
-                        yield return new WaitTime(50); // Brief pause to ensure key release is registered.
+                        yield return new WaitTime(50);
                     }
 
                     // Aim and press the dash key.
