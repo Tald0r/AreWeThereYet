@@ -536,7 +536,7 @@ public class AutoPilot
                     isMoveKeyPressed = false;
                     yield return new WaitTime(100);
                 }
-                const int TASK_TIMEOUT_SECONDS = 10;
+                const int TASK_TIMEOUT_SECONDS = 5;
                 if ((DateTime.Now - interactionTask.CreationTime).TotalSeconds > TASK_TIMEOUT_SECONDS)
                 {
                     tasks.Remove(interactionTask);
@@ -668,13 +668,17 @@ public class AutoPilot
                 // =====================================================================
                 // TIER 1: DIRECT LEADER OVERRIDE (THE NEW LOGIC)
                 // =====================================================================
+                
                 // Check if we can just go straight to the leader, ignoring the breadcrumbs.
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
                 
                 // Define a reasonable "direct follow" range (e.g., half the screen or ~400 units)
                 const float DIRECT_FOLLOW_RANGE = 400f; 
-
-                if (distanceToLeader < DIRECT_FOLLOW_RANGE && LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics()))
+                const int MAX_TASKS_FOR_OVERRIDE = 3; 
+                
+                if (movementTasks.Count < MAX_TASKS_FOR_OVERRIDE &&
+                    distanceToLeader < DIRECT_FOLLOW_RANGE &&
+                    LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics()))
                 {
                     // We can see the leader and they are close enough! Abandon the old path.
                     if (movementTasks.Count > 1) // Only log if we are actually skipping something
@@ -707,10 +711,10 @@ public class AutoPilot
                     continue;
                 }
 
-
                 // =====================================================================
                 // TIER 2 & 3: SMART TRAIN / STRICT FOLLOWING
                 // =====================================================================
+                
                 // If the direct override didn't trigger, proceed with path following.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
