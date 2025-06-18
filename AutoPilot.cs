@@ -127,6 +127,7 @@ public class AutoPilot
         }
     }
 
+    // This is the new, "smart" waypoint finder
     private TaskNode FindNextWaypoint(List<TaskNode> path, Vector3 playerPos)
     {
         if (path == null || !path.Any())
@@ -134,35 +135,43 @@ public class AutoPilot
             return null;
         }
 
-        int closestPointIndex = -1;
-        float minDistanceSq = float.MaxValue;
+        // Always start by targeting the very next point. This is our safe fallback.
+        var bestTarget = path.First();
 
-        // Find the segment of the path we are closest to
-        for (int i = 0; i < path.Count; i++)
+        // The number of waypoints to look ahead for a potential shortcut.
+        const int lookAheadLimit = 5; 
+
+        // Iterate through the next few points in the path to see if we can take a shortcut.
+        // We go backwards from the furthest point to the closest.
+        for (int i = Math.Min(path.Count - 1, lookAheadLimit); i > 0; i--)
         {
-            float distSq = Vector3.DistanceSquared(playerPos, path[i].WorldPosition);
-            if (distSq < minDistanceSq)
+            var potentialShortcut = path[i];
+            
+            // Use the built-in .WorldToGrid() extension method for clean conversion.
+            if (LineOfSight.HasLineOfSight(playerPos.WorldToGrid(), potentialShortcut.WorldPosition.WorldToGrid()))
             {
-                minDistanceSq = distSq;
-                closestPointIndex = i;
+                // We found a valid shortcut! This is our new target.
+                bestTarget = potentialShortcut;
+
+                // Since we are taking a shortcut, we can remove all the breadcrumbs we're skipping.
+                // This is crucial for keeping the path clean.
+                for (int j = 0; j < i; j++)
+                {
+                    tasks.Remove(path[j]);
+                }
+                
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"Found shortcut, skipping {i} waypoints.");
+                }
+
+                // Once we find the furthest possible shortcut, we take it and stop looking.
+                return bestTarget;
             }
         }
 
-        // If we are very close to the last point on the path, target it directly to finish.
-        if (closestPointIndex == path.Count - 1 && minDistanceSq < 40f * 40f)
-        {
-            return path[closestPointIndex];
-        }
-
-        // Otherwise, target the point *after* the one we are closest to.
-        // This makes the bot "look ahead" along the path, creating smooth turns.
-        if (closestPointIndex + 1 < path.Count)
-        {
-            return path[closestPointIndex + 1];
-        }
-
-        // If we're past the second-to-last point, just target the final point.
-        return path.Last();
+        // If no shortcuts were found, just return the very next breadcrumb.
+        return bestTarget;
     }
 
 
