@@ -11,6 +11,7 @@ using ExileCore.Shared;
 using ExileCore.Shared.Enums;
 using SharpDX;
 using AreWeThereYet.Utils;
+using System.Windows.Forms;
 
 namespace AreWeThereYet;
 
@@ -28,6 +29,7 @@ public class AutoPilot
 
     private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
+    private Entity _lastKnownLeaderPortal = null;
     private string _lastKnownLeaderZone = "";
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
 
@@ -363,7 +365,7 @@ public class AutoPilot
         while (true)
         {
             // =================================================================
-            // SECTION 1: INITIAL CHECKS & STATE SETUP
+            // SECTION 1: INITIAL CHECKS & UI CLEANUP
             // =================================================================
             if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive ||
                 !AreWeThereYet.Instance.GameController.IsForeGroundCache || MenuWindow.IsOpened || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
@@ -372,16 +374,40 @@ public class AutoPilot
                 continue;
             }
 
+            var ingameUi = AreWeThereYet.Instance.GameController.IngameState.IngameUi;
+            if (new List<Element> { ingameUi.TreePanel, ingameUi.AtlasTreePanel, ingameUi.OpenLeftPanel, ingameUi.OpenRightPanel, ingameUi.InventoryPanel, ingameUi.SettingsPanel, ingameUi.ChatPanel.Children.FirstOrDefault() }.Any(panel => panel != null && panel.IsVisible))
+            {
+                Keyboard.KeyPress(Keys.Escape);
+                yield return new WaitTime(150);
+                continue;
+            }
+
             followTarget = GetFollowingTarget();
             var leaderPartyElement = GetLeaderPartyElement();
 
             // =================================================================
-            // SECTION 2: TASK GENERATION LOGIC
+            // SECTION 2: TASK GENERATION LOGIC (with Portal Memory)
             // =================================================================
             // This section decides WHAT to do (add breadcrumbs, find portals, etc.)
-
-            // Case 1: Leader is in another zone. Find a portal or TP.
-            if (followTarget == null && leaderPartyElement != null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
+        
+            // --- NEW CASE 1.5: We have a portal memory and the leader has just zoned. Follow them! ---
+            if (followTarget == null && _lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
+            {
+                if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
+                {
+                    var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+                    if (portalLabel != null)
+                    {
+                        // Insert at the front to make it the absolute highest priority.
+                        tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
+                    }
+                }
+                // Use the memory once, then clear it to prevent getting stuck.
+                _lastKnownLeaderPortal = null;
+            }
+            // Case 1: Leader is in a different zone (standard TP/portal logic).
+            else if (followTarget == null && leaderPartyElement != null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
             {
                 // This is your existing, correct logic for zone transitions.
                 if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
@@ -457,12 +483,20 @@ public class AutoPilot
                     yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
                 }
             }
-            // Case 2: Leader is in the same zone. Decide whether to build a path or stand still.
+            // Case 2: Leader is in the same zone.
             else if (followTarget != null)
             {
-                // Reset zone tracking since we found the leader in our area.
-                _lastKnownLeaderZone = "";
-                _leaderZoneChangeTime = DateTime.MinValue;
+                // --- NEW LOGIC: Record when the leader targets a portal ---
+                var leaderActor = followTarget.GetComponent<Actor>();
+                if (leaderActor?.CurrentAction?.Target != null)
+                {
+                    var target = leaderActor.CurrentAction.Target;
+                    if (target.Type == EntityType.AreaTransition || target.Type == EntityType.Portal || target.Type == EntityType.TownPortal)
+                    {
+                        _lastKnownLeaderPortal = target;
+                    }
+                }
+
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
 
                 // ** THE CRITICAL FIX IS HERE **
@@ -520,7 +554,7 @@ public class AutoPilot
             }
 
             // =================================================================
-            // SECTION 3: TASK EXECUTION STATE MACHINE (with Dash logic restored)
+            // SECTION 3: TASK EXECUTION STATE MACHINE
             // =================================================================
             // This section executes whatever task is at the front of the queue.
 
