@@ -708,26 +708,36 @@ public class AutoPilot
                 
                 // Define a reasonable "direct follow" range (e.g., half the screen or ~400 units)
                 const float DIRECT_FOLLOW_RANGE = 400f; 
-                const int MAX_TASKS_FOR_OVERRIDE = 3; 
-                
-                if (movementTasks.Count < MAX_TASKS_FOR_OVERRIDE &&
-                    distanceToLeader < DIRECT_FOLLOW_RANGE &&
-                    LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics()))
-                {
-                    // We can see the leader and they are close enough! Abandon the old path.
-                    if (movementTasks.Count > 1) // Only log if we are actually skipping something
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"Leader is visible and close. Clearing {movementTasks.Count} breadcrumbs and moving directly.");
-                        }
-                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
-                    }
+                const int MAX_TASKS_FOR_OVERRIDE = 3;
 
-                    // Add a single, direct task to the leader's position.
-                    if (!tasks.Any(t => t.Type == TaskNodeType.Movement))
+                if (followTarget != null &&
+                    movementTasks.Count < MAX_TASKS_FOR_OVERRIDE &&
+                    distanceToLeader < DIRECT_FOLLOW_RANGE)
+                {
+                    // Check LoS separately so we can log it.
+                    bool hasDirectLoS = LineOfSight.HasLineOfSight(AreWeThereYet.Instance.playerPosition.WorldToGrid().ToNumerics(), followTarget.Pos.WorldToGrid().ToNumerics());
+
+                    if (hasDirectLoS)
                     {
-                        tasks.Add(new TaskNode(followTarget.Pos, 40, TaskNodeType.Movement));
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[OVERRIDE TRIGGERED] Leader is visible (LoS: {hasDirectLoS}) and close ({distanceToLeader:F1}). Clearing {movementTasks.Count} breadcrumbs.", 5, Color.Aqua);
+                        }
+                        // We can see the leader and they are close enough! Abandon the old path.
+                        if (movementTasks.Count > 1) // Only log if we are actually skipping something
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"Leader is visible and close. Clearing {movementTasks.Count} breadcrumbs and moving directly.");
+                            }
+                            tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                        }
+
+                        // Add a single, direct task to the leader's position.
+                        if (!tasks.Any(t => t.Type == TaskNodeType.Movement))
+                        {
+                            tasks.Add(new TaskNode(followTarget.Pos, 40, TaskNodeType.Movement));
+                        }
                     }
                 }
                 

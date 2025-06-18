@@ -16,11 +16,13 @@ namespace AreWeThereYet.Utils
     {
         private readonly GameController _gameController;
         public volatile int[][] _terrainData;
+        private readonly object _terrainDataLock = new object();
+        
         private Vector2i _areaDimensions;
         
         // Periodic refresh for dynamic door detection
         private DateTime _lastTerrainRefresh = DateTime.MinValue;
-        private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.Debug.Terrain.RefreshInterval?.Value ?? 500;
+        private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.Debug.Terrain.RefreshInterval?.Value ?? 1000;
         
         // Debug visualization (keeping your current approach but enhanced)
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
@@ -178,34 +180,42 @@ namespace AreWeThereYet.Utils
             {
                 if (_gameController?.IngameState?.Data == null)
                 {
-                    _terrainData = null;
+                    lock (_terrainDataLock) // Lock before writing
+                    {
+                        _terrainData = null;
+                    }
                     return;
                 }
 
-                // Get BOTH terrain data sources (TraceMyRay style)
-                var walkableData = _gameController.IngameState.Data.RawFramePathfindingData;     // Can walk?
-                var targetingData = _gameController.IngameState.Data.RawFrameTerrainTargetingData; // Can dash/shoot?
+                var walkableData = _gameController.IngameState.Data.RawFramePathfindingData;
+                var targetingData = _gameController.IngameState.Data.RawFrameTerrainTargetingData;
 
                 if (walkableData == null || targetingData == null || walkableData.Length == 0)
                 {
-                    _terrainData = null;
+                    lock (_terrainDataLock) // Lock before writing
+                    {
+                        _terrainData = null;
+                    }
                     return;
                 }
 
-                // Create combined terrain data
-                _terrainData = new int[walkableData.Length][];
+                // Create the new data outside the lock to minimize lock time
+                var newTerrainData = new int[walkableData.Length][];
                 for (var y = 0; y < walkableData.Length; y++)
                 {
-                    _terrainData[y] = new int[walkableData[y].Length];
-                    
+                    newTerrainData[y] = new int[walkableData[y].Length];
                     for (var x = 0; x < walkableData[y].Length; x++)
                     {
                         var walkable = walkableData[y][x];
                         var targeting = targetingData[y][x];
-                        
-                        // COMBINE into three clear states
-                        _terrainData[y][x] = CombineTerrainLayers(walkable, targeting);
+                        newTerrainData[y][x] = CombineTerrainLayers(walkable, targeting);
                     }
+                }
+
+                // Lock only for the final, quick assignment
+                lock (_terrainDataLock)
+                {
+                    _terrainData = newTerrainData;
                 }
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -216,9 +226,13 @@ namespace AreWeThereYet.Utils
             catch (Exception ex)
             {
                 AreWeThereYet.Instance.LogError($"LineOfSight: Failed to update terrain data: {ex.Message}");
-                _terrainData = null;
+                lock (_terrainDataLock) // Lock before writing on error
+                {
+                    _terrainData = null;
+                }
             }
         }
+
 
         /// <summary>
         /// Terrain combination logic for real-time door detection
@@ -256,30 +270,31 @@ namespace AreWeThereYet.Utils
         /// </summary>
         public bool HasLineOfSight(Vector2 start, Vector2 end)
         {
-            try
+            lock (_terrainDataLock)
             {
-                // Enhanced validation
-                if (_terrainData == null || _terrainData.Length == 0)
+                try
                 {
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        AreWeThereYet.Instance.LogMessage("LineOfSight: Terrain data not available");
-                    return true; // Conservative fallback
+                    // Enhanced validation
+                    if (_terrainData == null || _terrainData.Length == 0)
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            AreWeThereYet.Instance.LogMessage("LineOfSight: Terrain data not available, returning true as fallback.");
+                        return true; // Conservative fallback
+                    }
+
+                    var isVisible = HasLineOfSightInternal(start, end);
+                    _debugRays.Add((start, end, isVisible));
+
+                    return isVisible;
                 }
-
-                // REMOVED: RefreshTerrainData() - now handled by render loop
-                // RefreshTerrainData();
-
-                var isVisible = HasLineOfSightInternal(start, end);
-                _debugRays.Add((start, end, isVisible));
-
-                return isVisible;
-            }
-            catch (Exception ex)
-            {
-                AreWeThereYet.Instance.LogError($"HasLineOfSight failed: {ex.Message}");
-                return true; // Conservative fallback
+                catch (Exception ex)
+                {
+                    AreWeThereYet.Instance.LogError($"[FATAL] HasLineOfSight CRASHED. Start: {start}, End: {end}. Terrain Data Rows: {(_terrainData?.Length ?? -1)}. Exception: {ex.Message}", 10);
+                    return true; // Conservative fallback on crash
+                }
             }
         }
+
 
         /// <summary>
         /// TraceMyRay-style efficient DDA line-of-sight algorithm
@@ -447,65 +462,57 @@ namespace AreWeThereYet.Utils
         /// </summary>
         private void RenderTerrainGrid(RenderEvent evt)
         {
-            foreach (var (pos, value) in _debugPoints)
+            lock (_terrainDataLock)
             {
-                // Use DrawAtPlayerPlane setting like TraceMyRay
-                var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
-                    ? _lastObserverZ
-                    : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
+                if (_terrainData == null) return; // Null check inside lock
 
-                var worldPos = new Vector3(pos.GridToWorld(), z);
-                var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
+                foreach (var (pos, value) in _debugPoints)
+                {
+                    var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
+                        ? _lastObserverZ
+                        : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
 
-                SharpDX.Color color;
-                if (_debugVisiblePoints.Contains(pos))
-                {
-                    color = SharpDX.Color.Cyan; // Line of sight trace
-                }
-                else
-                {
-                    // Enhanced color mapping based on passability
-                    color = value switch
+                    var worldPos = new System.Numerics.Vector3(pos.GridToWorld(), z);
+                    var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
+
+                    SharpDX.Color color;
+                    if (_debugVisiblePoints.Contains(pos))
                     {
-                        0 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile0.Value,
-                        1 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile1.Value,
-                        2 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile2.Value,
-                        3 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile3.Value,
-                        4 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile4.Value,
-                        5 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile5.Value,
-                        _ => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.TileUnknown.Value  // Gray - Unknown = EntityColors.Shadow.Value???
-                    };
+                        color = SharpDX.Color.Cyan; // Line of sight trace
+                    }
+                    else
+                    {
+                        // Enhanced color mapping based on passability
+                        color = value switch
+                        {
+                            0 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile0.Value,
+                            1 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile1.Value,
+                            2 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile2.Value,
+                            3 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile3.Value,
+                            4 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile4.Value,
+                            5 => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.Tile5.Value,
+                            _ => AreWeThereYet.Instance.Settings.Debug.Terrain.Colors.TileUnknown.Value
+                        };
+                    }
 
-                    // // Enhanced color mapping based on passability 
-                    // color = value switch
-                    // {
-                    //     0 => new SharpDX.Color(220, 100, 50, 200),   // Red - Impassable
-                    //     1 => new SharpDX.Color(255, 165, 0, 200),    // Orange - Low obstacle
-                    //     2 => new SharpDX.Color(255, 255, 0, 180),    // Yellow - Medium obstacle (default threshold)
-                    //     3 => new SharpDX.Color(100, 255, 100, 180),  // Light Green - Dashable
-                    //     4 => new SharpDX.Color(50, 200, 50, 160),    // Green - Walkable
-                    //     5 => new SharpDX.Color(0, 150, 0, 160),      // Dark Green - Highly walkable
-                    //     _ => new SharpDX.Color(128, 128, 128, 160)   // Gray - Unknown
-                    // };
+                    if (AreWeThereYet.Instance.Settings.Debug.Terrain.ReplaceValuesWithDots?.Value == true)
+                        evt.Graphics.DrawCircleFilled(
+                            screenPos,
+                            AreWeThereYet.Instance.Settings.Debug.Terrain.DotSize.Value,
+                            color,
+                            AreWeThereYet.Instance.Settings.Debug.Terrain.DotSegments.Value
+                        );
+                    else
+                        evt.Graphics.DrawText(
+                            value.ToString(),
+                            screenPos,
+                            color,
+                            FontAlign.Center
+                        );
                 }
-
-                // Draw the terrain values with colored dots or numbers
-                if (AreWeThereYet.Instance.Settings.Debug.Terrain.ReplaceValuesWithDots?.Value == true)
-                    evt.Graphics.DrawCircleFilled(
-                        screenPos,
-                        AreWeThereYet.Instance.Settings.Debug.Terrain.DotSize.Value,
-                        color,
-                        AreWeThereYet.Instance.Settings.Debug.Terrain.DotSegments.Value
-                    );
-                else
-                    evt.Graphics.DrawText(
-                        value.ToString(),
-                        screenPos,
-                        color,
-                        FontAlign.Center
-                    );
             }
         }
+
 
         /// <summary>
         /// Check if cursor position is visible from player
@@ -634,11 +641,15 @@ namespace AreWeThereYet.Utils
 
         public void Clear()
         {
-            _terrainData = null;
+            lock (_terrainDataLock)
+            {
+                _terrainData = null;
+            }
             _debugPoints.Clear();
             _debugRays.Clear();
             _debugVisiblePoints.Clear();
             _lastTerrainRefresh = DateTime.MinValue;
         }
+
     }
 }
