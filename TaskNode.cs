@@ -1,6 +1,6 @@
 using ExileCore.PoEMemory.Elements;
-using SharpDX;
 using System;
+using System.Numerics;
 
 namespace AreWeThereYet;
 
@@ -43,7 +43,7 @@ public class TaskNode
     public TaskNode(LabelOnGround labelOnGround, int bounds, TaskNodeType type = TaskNodeType.Movement)
     {
         LabelOnGround = labelOnGround;
-        WorldPosition = labelOnGround.ItemOnGround.Pos;
+        WorldPosition = labelOnGround.ItemOnGround.PosNum;
         Type = type;
         Bounds = bounds;
         CreationTime = DateTime.Now;

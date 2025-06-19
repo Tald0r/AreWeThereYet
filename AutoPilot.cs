@@ -9,9 +9,12 @@ using ExileCore.PoEMemory.Elements;
 using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
 using ExileCore.Shared.Enums;
-using SharpDX;
+using ExileCore.Shared.Helpers;
 using AreWeThereYet.Utils;
 using System.Windows.Forms;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
+using Color = SharpDX.Color;
 
 namespace AreWeThereYet;
 
@@ -105,31 +108,69 @@ public class AutoPilot
     {
         try
         {
-            const float LEADER_BREADCRUMB_DISTANCE = 50f; // Distance before dropping a new breadcrumb
-
-            // Find the position of the very last movement task in our queue.
-            // If there are no tasks, use the bot's last known position.
+            const float LEADER_BREADCRUMB_DISTANCE = 50f;
             var lastBreadcrumbPos = tasks.LastOrDefault(t => t.Type == TaskNodeType.Movement)?.WorldPosition ?? lastPlayerPosition;
 
-            // Only add a new breadcrumb if the leader has moved far enough from the last one.
             if (Vector3.Distance(leaderPos, lastBreadcrumbPos) >= LEADER_BREADCRUMB_DISTANCE)
             {
-                // The completion bound (35) should match the distance check in the task execution logic.
-                tasks.Add(new TaskNode(leaderPos, 35, TaskNodeType.Movement));
+                // The modern WorldToGrid() directly converts SharpDX.Vector3 to System.Numerics.Vector2
+                System.Numerics.Vector2 leaderGridPos = leaderPos.WorldToGrid();
 
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                if (TryFindNearestWalkablePosition(leaderGridPos, out var walkableGridPos))
                 {
-                    AreWeThereYet.Instance.LogMessage($"Added breadcrumb. Total movement tasks: {tasks.Count(t => t.Type == TaskNodeType.Movement)}");
+                    // The modern GridToWorld() directly converts System.Numerics.Vector2 to System.Numerics.Vector3
+                    Vector3 walkableWorldPos = walkableGridPos.GridToWorld(leaderPos.Z);
+
+                    tasks.Add(new TaskNode(walkableWorldPos, 40, TaskNodeType.Movement));
                 }
             }
         }
-        catch (Exception ex)
-        {
-            AreWeThereYet.Instance.LogError($"AddBreadcrumbTask failed: {ex.Message}");
-        }
+        catch (Exception ex) { AreWeThereYet.Instance.LogError($"AddBreadcrumbTask failed: {ex.Message}"); }
     }
 
-    // This is the new, "smart" waypoint finder
+
+    private bool TryFindNearestWalkablePosition(System.Numerics.Vector2 originalGridPos, out System.Numerics.Vector2 walkableGridPos)
+    {
+        walkableGridPos = originalGridPos;
+
+        // Check if the original position is already walkable.
+        if (LineOfSight.IsTerrainPassable(originalGridPos))
+        {
+            return true;
+        }
+
+        // If not, search in an expanding spiral for the nearest walkable tile.
+        for (int radius = 1; radius <= 15; radius++) // Search up to a 15-tile radius
+        {
+            for (int i = -radius; i <= radius; i++)
+            {
+                for (int j = -radius; j <= radius; j++)
+                {
+                    // Only check the shell of the spiral
+                    if (Math.Abs(i) != radius && Math.Abs(j) != radius) continue;
+
+                    System.Numerics.Vector2 checkPos = new System.Numerics.Vector2(originalGridPos.X + i, originalGridPos.Y + j);
+                    if (LineOfSight.IsTerrainPassable(checkPos))
+                    {
+                        walkableGridPos = checkPos;
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[AddBreadcrumb] Leader pos {originalGridPos} was invalid. Snapped to nearest walkable tile {walkableGridPos}.", 5, Color.OrangeRed);
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // If no walkable tile is found within the search radius, fail.
+        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+        {
+            AreWeThereYet.Instance.LogMessage($"[AddBreadcrumb] Could not find any walkable tile near {originalGridPos}. Aborting task.", 5, Color.Red);
+        }
+        return false;
+    }
+
     private TaskNode FindNextWaypoint(List<TaskNode> path, Vector3 playerPos)
     {
         if (path == null || !path.Any())
@@ -137,43 +178,35 @@ public class AutoPilot
             return null;
         }
 
-        // Always start by targeting the very next point. This is our safe fallback.
-        var bestTarget = path.First();
+        var playerGridPos = playerPos.WorldToGrid();
 
-        // The number of waypoints to look ahead for a potential shortcut.
-        const int lookAheadLimit = 5; 
-
-        // Iterate through the next few points in the path to see if we can take a shortcut.
-        // We go backwards from the furthest point to the closest.
+        // Look ahead for a valid, visible shortcut.
+        const int lookAheadLimit = 5;
         for (int i = Math.Min(path.Count - 1, lookAheadLimit); i > 0; i--)
         {
-            var potentialShortcut = path[i];
-            
-            // Use the built-in .WorldToGrid() extension method for clean conversion.
-            if (LineOfSight.HasLineOfSight(playerPos.WorldToGrid().ToNumerics(), potentialShortcut.WorldPosition.WorldToGrid().ToNumerics()))
+            var potentialShortcutNode = path[i];
+
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
             {
-                // We found a valid shortcut! This is our new target.
-                bestTarget = potentialShortcut;
+                AreWeThereYet.Instance.LogMessage($"[FindNext] Checking shortcut to node {i} at {potentialShortcutNode.WorldPosition}", 5, Color.Gray);
+            }
 
-                // Since we are taking a shortcut, we can remove all the breadcrumbs we're skipping.
-                // This is crucial for keeping the path clean.
-                for (int j = 0; j < i; j++)
+            if (LineOfSight.HasLineOfSight(playerGridPos, potentialShortcutNode.WorldPosition.WorldToGrid()))
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
                 {
-                    tasks.Remove(path[j]);
+                    AreWeThereYet.Instance.LogMessage($"[FindNext] -> SUCCESS! Can see node {i}. Taking shortcut.", 5, Color.LimeGreen);
                 }
-                
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                {
-                    AreWeThereYet.Instance.LogMessage($"Found shortcut, skipping {i} waypoints.");
-                }
-
-                // Once we find the furthest possible shortcut, we take it and stop looking.
-                return bestTarget;
+                return potentialShortcutNode;
             }
         }
 
-        // If no shortcuts were found, just return the very next breadcrumb.
-        return bestTarget;
+        // If no shortcuts are visible, our best target is the very next point on the path.
+        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value && path.Any())
+        {
+            AreWeThereYet.Instance.LogMessage($"[FindNext] -> No shortcuts found. Defaulting to next node at {path.First().WorldPosition}", 5, Color.Orange);
+        }
+        return path.First();
     }
 
 
@@ -194,7 +227,7 @@ public class AutoPilot
                             x.Label.IsVisible && x.ItemOnGround != null &&
                             (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
                                 x.ItemOnGround.Metadata.ToLower().Contains("portal")))
-                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.PosNum))
                     .ToList();
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -215,7 +248,7 @@ public class AutoPilot
                             (x.ItemOnGround.Metadata.ToLower().Contains("areatransition") ||
                                 x.ItemOnGround.Metadata.ToLower().Contains("portal")) &&
                             x.Label.Text.ToLower().Contains(leaderPartyElement.ZoneName.ToLower())) // IMPORTANT KEY IMPROVEMENT: Check portal text
-                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.Pos))
+                    .OrderBy(x => Vector3.Distance(lastTargetPosition, x.ItemOnGround.PosNum))
                     .ToList();
 
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -277,7 +310,7 @@ public class AutoPilot
                         x.ItemOnGround.Metadata.ToLower().Contains("mercenary") &&
                         x.Label.Children?.Count > 2 && x.Label.Children[2] != null &&
                         x.Label.Children[2].IsVisible)
-                .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.Pos))
+                .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.PosNum))
                 .ToList();
                 
             return mercenaryLabels?.FirstOrDefault();
@@ -317,7 +350,10 @@ public class AutoPilot
         try
         {
             var windowOffset = AreWeThereYet.Instance.GameController.Window.GetWindowRectangle().TopLeft;
-            var elemCenter = (Vector2)leaderPartyElement?.TpButton?.GetClientRectCache.Center;
+            var center = leaderPartyElement?.TpButton?.GetClientRectCache.Center;
+            if (center == null)
+                return Vector2.Zero;
+            var elemCenter = new Vector2(center.Value.X, center.Value.Y);
             var finalPos = new Vector2(elemCenter.X + windowOffset.X, elemCenter.Y + windowOffset.Y);
             
             return finalPos;
@@ -450,7 +486,7 @@ public class AutoPilot
                         var tpConfirmation = GetTpConfirmation();
                         if (tpConfirmation != null)
                         {
-                            yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                            yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center.ToNumerics());
                             yield return new WaitTime(200);
                             yield return Mouse.LeftClick();
                             yield return new WaitTime(1000);
@@ -491,11 +527,11 @@ public class AutoPilot
                     _lastKnownLeaderPortal = target;
                 }
 
-                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.PosNum);
                 if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
                 {
                     // We are far away, so we add the leader's position as a breadcrumb to follow.
-                    AddBreadcrumbTask(followTarget.Pos);
+                    AddBreadcrumbTask(followTarget.PosNum);
                 }
                 // If CLOSE to leader -> Clear the path and do nothing, restoring the desired behavior.
                 else
@@ -508,18 +544,18 @@ public class AutoPilot
                     if (!tasks.Any(t => t.Type == TaskNodeType.Loot))
                     {
                         var questLoot = GetQuestItem();
-                        if (questLoot != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                        if (questLoot != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.PosNum) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                         {
                             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                             {
-                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.PosNum);
                                 AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
                             }
-                            tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.Loot));
+                            tasks.Add(new TaskNode(questLoot.PosNum, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value, TaskNodeType.Loot));
                         }
                         else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                            var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.PosNum);
                             var hasLootTask = !tasks.Any(t => t.Type == TaskNodeType.Loot);
                             AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
                         }
@@ -527,7 +563,7 @@ public class AutoPilot
                     if (!tasks.Any(t => t.Type == TaskNodeType.MercenaryOptIn))
                     {
                         var mercenaryOptIn = GetMercenaryOptInButton();
-                        if (mercenaryOptIn != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                        if (mercenaryOptIn != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.PosNum) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                         {
                             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                             {
@@ -537,8 +573,8 @@ public class AutoPilot
                         }
                     }
                 }
-                if (followTarget?.Pos != null)
-                    lastTargetPosition = followTarget.Pos;
+                if (followTarget?.PosNum != null)
+                    lastTargetPosition = followTarget.PosNum;
             }
 
             // =================================================================
@@ -573,7 +609,7 @@ public class AutoPilot
                             var questLoot = GetQuestItem();
                             if (questLoot == null
                                 || interactionTask.AttemptCount > 2
-                                || Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) >=
+                                || Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.PosNum) >=
                                 AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                             {
                                 tasks.RemoveAt(0);
@@ -639,7 +675,7 @@ public class AutoPilot
                             // Remove task if button disappeared, too many attempts, or we're too far
                             if (mercenaryOptIn == null ||
                                 interactionTask.AttemptCount > 3 ||
-                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) >=
+                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.PosNum) >=
                                 AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                             {
                                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -670,7 +706,7 @@ public class AutoPilot
                                 yield return new WaitTime(200);
                                 yield return Mouse.LeftClick();
                                 yield return new WaitTime(500); // Wait for button to process click
-                                
+
                                 // Remove task after clicking (button should disappear)
                                 tasks.RemoveAt(0);
                             }
@@ -679,7 +715,7 @@ public class AutoPilot
                                 // Couldn't get button position, remove task
                                 tasks.RemoveAt(0);
                             }
-                            
+
                             break;
                         }
                 }
@@ -687,8 +723,7 @@ public class AutoPilot
             // --- STATE 2: Handle Continuous Movement ---
             else if (movementTasks.Any())
             {
-                // MOVEMENT LOGIC: We REMOVED the conflicting Tier 1 override.
-                // We now ONLY use the "Smart Train" logic.
+                // 1. QUERY: Ask our pure function for the best target.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
                 if (targetWaypoint == null)
@@ -702,12 +737,23 @@ public class AutoPilot
                     continue;
                 }
 
-                // Check if we should dash to this specific waypoint.
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                {
+                    AreWeThereYet.Instance.LogMessage($"[Movement] Target chosen: {targetWaypoint.WorldPosition.WorldToGrid()}. Path has {movementTasks.Count} nodes.", 5, Color.Yellow);
+                }
+    
+                // 2. DECIDE: Check if we should dash to that target.
                 bool canDash = AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value &&
-                            ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
+                               ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
 
+                // 3. ACT: Perform the dash or move action.
                 if (canDash)
                 {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Dashing.", 5, Color.Cyan);
+                    }
+        
                     // DASHING: Release the move key and perform a dash.
                     if (isMoveKeyPressed)
                     {
@@ -723,6 +769,11 @@ public class AutoPilot
                 }
                 else // NOT DASHING: Perform normal continuous movement.
                 {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Moving.", 5, Color.White);
+                    }
+        
                     // Press and hold the move key if it's not already held.
                     if (!isMoveKeyPressed)
                     {
@@ -733,16 +784,30 @@ public class AutoPilot
                     yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(targetWaypoint.WorldPosition));
                 }
 
-                // CLEANUP
-                var firstNode = movementTasks.First();
-                var distanceToFirstNode = Vector3.Distance(AreWeThereYet.Instance.playerPosition, firstNode.WorldPosition);
-                if (distanceToFirstNode <= 40f) // Completion radius
+                // 4. CLEANUP: Now that the action is done, the main loop cleans up the task list.
+                int targetIndex = movementTasks.IndexOf(targetWaypoint);
+                if (targetIndex > 0)
                 {
-                    tasks.Remove(firstNode);
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    // If we took a shortcut, remove the skipped breadcrumbs.
+                    for (int i = 0; i < targetIndex; i++)
                     {
-                        AreWeThereYet.Instance.LogMessage($"Consumed breadcrumb. {tasks.Count(t => t.Type == TaskNodeType.Movement)} remaining.");
+                        tasks.Remove(movementTasks[i]);
                     }
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[Cleanup] Took shortcut, consumed {targetIndex} breadcrumbs.", 5, Color.LimeGreen);
+                    }
+                }
+
+                // Always check if we have reached the current first node.
+                var firstNode = tasks.FirstOrDefault(t => t.Type == TaskNodeType.Movement);
+                if (firstNode != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, firstNode.WorldPosition) <= 40f)
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[Cleanup] Reached node {firstNode.WorldPosition.WorldToGrid()}. Consuming.", 5, Color.Goldenrod);
+                    }
+                    tasks.Remove(firstNode);
                 }
             }
             
@@ -773,7 +838,7 @@ public class AutoPilot
                 return false;
             }
             
-            if (AreWeThereYet.Instance?.GameController?.Player?.GridPos == null)
+            if (AreWeThereYet.Instance?.GameController?.Player?.GridPosNum == null)
             {
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     AreWeThereYet.Instance.LogMessage("ShouldUseDash: Player GridPos is null");
@@ -787,7 +852,7 @@ public class AutoPilot
                 return false;
             }
             
-            var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
+            var playerPos = AreWeThereYet.Instance.GameController.Player.GridPosNum;
             var distance = Vector2.Distance(playerPos, targetPosition);
             
             var minDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMinDistance.Value;
@@ -820,7 +885,7 @@ public class AutoPilot
             }
             
             return shouldDash;
-            }
+        }
         catch (Exception ex)
         {
             // Log the error but DON'T let it bubble up to crash the coroutine
@@ -863,7 +928,7 @@ public class AutoPilot
                         return false;
                     }
                 })
-                .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.Pos))
+                .OrderBy(x => Vector3.Distance(AreWeThereYet.Instance.playerPosition, x.ItemOnGround.PosNum))
                 .ToList();
                 
             // Return the Entity from the closest quest item label
@@ -905,7 +970,7 @@ public class AutoPilot
                     
             foreach (var portal in portalLabels)
             {
-                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft, portal.Label.GetClientRectCache.TopRight, 2f, Color.Firebrick);
+                AreWeThereYet.Instance.Graphics.DrawLine(portal.Label.GetClientRectCache.TopLeft.ToNumerics(), portal.Label.GetClientRectCache.TopRight.ToNumerics(), 2f, Color.Firebrick);
             }
         }
         catch (Exception)
@@ -931,10 +996,10 @@ public class AutoPilot
                         return false;
                     }
                 }).ToList();
-                
+
             foreach (var questItem in questItemLabels)
             {
-                AreWeThereYet.Instance.Graphics.DrawLine(questItem.Label.GetClientRectCache.TopLeft, questItem.Label.GetClientRectCache.TopRight, 4f, Color.Lime);
+                AreWeThereYet.Instance.Graphics.DrawLine(questItem.Label.GetClientRectCache.TopLeft.ToNumerics(), questItem.Label.GetClientRectCache.TopRight.ToNumerics(), 4f, Color.Lime);
             }
         }
         catch (Exception)
@@ -955,7 +1020,7 @@ public class AutoPilot
             foreach (var mercenary in mercenaryLabels)
             {
                 var optInButton = mercenary.Label.Children[2];
-                AreWeThereYet.Instance.Graphics.DrawLine(optInButton.GetClientRectCache.TopLeft, optInButton.GetClientRectCache.TopRight, 3f, Color.Cyan);
+                AreWeThereYet.Instance.Graphics.DrawLine(optInButton.GetClientRectCache.TopLeft.ToNumerics(), optInButton.GetClientRectCache.TopRight.ToNumerics(), 3f, Color.Cyan);
             }
         }
         catch (Exception)

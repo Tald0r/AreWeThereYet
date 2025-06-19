@@ -154,11 +154,11 @@ namespace AreWeThereYet.Utils
                     // CRITICAL FIX: Always update timer, even if update failed
                     _lastTerrainRefresh = DateTime.Now;
                     
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        var status = _terrainData != null ? "SUCCESS" : "FAILED";
-                        AreWeThereYet.Instance.LogMessage($"LineOfSight: Terrain refresh {status} at {DateTime.Now:HH:mm:ss.fff} (interval: {refreshInterval}ms)");
-                    }
+                    // if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    // {
+                    //     var status = _terrainData != null ? "SUCCESS" : "FAILED";
+                    //     AreWeThereYet.Instance.LogMessage($"LineOfSight: Terrain refresh {status} at {DateTime.Now:HH:mm:ss.fff} (interval: {refreshInterval}ms)");
+                    // }
                 }
             }
             catch (Exception ex)
@@ -396,7 +396,7 @@ namespace AreWeThereYet.Utils
         /// <summary>
         /// Configurable terrain passability check
         /// </summary>
-        private bool IsTerrainPassable(Vector2 pos)
+        public bool IsTerrainPassable(Vector2 pos)
         {
             var terrainValue = GetTerrainValue(pos);
             var threshold = AreWeThereYet.Instance.Settings.AutoPilot.Dash.TerrainValueForCollision.Value;

@@ -2,17 +2,10 @@
 using ExileCore.Shared.Attributes;
 using ExileCore.Shared.Interfaces;
 using ExileCore.Shared.Nodes;
-using SharpDX;
+using Color = SharpDX.Color;
 
 namespace AreWeThereYet;
 
-public static class ColorExtensions
-{
-    public static Color ToSharpDx(this System.Drawing.Color color)
-    {
-        return new Color(color.R, color.G, color.B, color.A);
-    }
-}
 
 public class AreWeThereYetSettings : ISettings
 {
@@ -48,7 +41,7 @@ public class AutoPilotSettings
     public class VisualSettings
     {
         public RangeNode<int> TaskLineWidth { get; set; } = new(3, 0, 10);
-        public ColorNode TaskLineColor { get; set; } = new(System.Drawing.Color.Green.ToSharpDx());
+        public ColorNode TaskLineColor { get; set; } = new(SharpDX.Color.Magenta);
     }
 
     public DashSettings Dash { get; set; } = new();
@@ -102,31 +95,30 @@ public class DebugSettings
         {
             // Red - Impassable
             [Menu("Tile0 - Impassable")]
-            public ColorNode Tile0 { get; set; } = new(System.Drawing.Color.FromArgb(200, 255, 100, 50).ToSharpDx());
-
+            public ColorNode Tile0 { get; set; } = new(Color.Red);
             // Light Green - Basic walkable
             [Menu("Tile1 - Basic walkable")]
-            public ColorNode Tile1 { get; set; } = new(System.Drawing.Color.FromArgb(0, 100, 255, 100).ToSharpDx());
+            public ColorNode Tile1 { get; set; } = new(Color.LightGreen);
 
             // Yellow - Static objects (dashable)
             [Menu("Tile2 - Static objects (dashable)")]
-            public ColorNode Tile2 { get; set; } = new(System.Drawing.Color.FromArgb(180, 255, 255, 0).ToSharpDx());
+            public ColorNode Tile2 { get; set; } = new(Color.Yellow);
 
             // Blue - Reserved
             [Menu("Tile3 - Reserved")]
-            public ColorNode Tile3 { get; set; } = new(System.Drawing.Color.FromArgb(0, 0, 0, 255).ToSharpDx());
+            public ColorNode Tile3 { get; set; } = new(Color.Blue);
 
             // Purple - Reserved
             [Menu("Tile4 - Reserved")]
-            public ColorNode Tile4 { get; set; } = new(System.Drawing.Color.FromArgb(0, 128, 0, 128).ToSharpDx());
+            public ColorNode Tile4 { get; set; } = new(Color.Purple);
 
             // Dark Green - Open walkable space
             [Menu("Tile5 - Open walkable space")]
-            public ColorNode Tile5 { get; set; } = new(System.Drawing.Color.FromArgb(160, 0, 200, 0).ToSharpDx());
+            public ColorNode Tile5 { get; set; } = new(Color.Green);
 
             // Gray - Unknown - EntityColors.Shadow.Value ?
             [Menu("TileUnknown - Unknown")]
-            public ColorNode TileUnknown { get; set; } = new(System.Drawing.Color.FromArgb(160, 128, 128, 128).ToSharpDx());
+            public ColorNode TileUnknown { get; set; } = new(Color.Gray);
         }
     }
 }

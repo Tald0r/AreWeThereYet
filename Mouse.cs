@@ -1,9 +1,9 @@
 using System;
 using System.Collections;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using ExileCore.Shared;
-using SharpDX;
 
 namespace AreWeThereYet;
 
@@ -88,7 +88,7 @@ public static class Mouse
         if (step > 6)
             for (var i = 0; i < step; i++)
             {
-                var vector2 = Vector2.SmoothStep(AreWeThereYet.Instance.GetMousePosition(), targetPos, i / step);
+                var vector2 = SmoothStep(AreWeThereYet.Instance.GetMousePosition(), targetPos, i / step);
                 SetCursorPos((int)vector2.X, (int)vector2.Y);
                 yield return new WaitTime(5);
             }
@@ -103,5 +103,13 @@ public static class Mouse
         yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency + extraDelay);
         LeftMouseUp();
         yield return new WaitTime(100);
+    }
+
+    // Custom SmoothStep implementation for Vector2
+    private static Vector2 SmoothStep(Vector2 from, Vector2 to, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        t = t * t * (3f - 2f * t);
+        return from + (to - from) * t;
     }
 }

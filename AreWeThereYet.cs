@@ -5,12 +5,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Numerics;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.Shared;
 using ExileCore.Shared.Enums;
-using SharpDX;
 using AreWeThereYet.Utils;
 
 namespace AreWeThereYet;
@@ -97,7 +97,7 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
             localPlayer = GameController.Game.IngameState.Data.LocalPlayer;
             player = localPlayer.GetComponent<Life>();
             buffs = localPlayer.GetComponent<Buffs>().BuffsList;
-            playerPosition = localPlayer.Pos;
+            playerPosition = localPlayer.PosNum;
 
             if (GameController.Area.CurrentArea.IsHideout || GameController.Area.CurrentArea.IsTown ||
                 GameController.IngameState.IngameUi.NpcDialog.IsVisible ||
