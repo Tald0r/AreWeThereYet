@@ -31,6 +31,10 @@ public class TaskNode
     public LabelOnGround LabelOnGround { get; set; }
     
     public DateTime CreationTime { get; }
+    
+    public PathingAction RequiredAction { get; set; } = PathingAction.Move; // Default to Move
+
+    
 
     public TaskNode(Vector3 position, int bounds, TaskNodeType type = TaskNodeType.Movement)
     {
@@ -56,4 +60,10 @@ public enum TaskNodeType
     Transition,
     Loot,
     MercenaryOptIn
+}
+
+public enum PathingAction
+{
+    Move,
+    Dash
 }

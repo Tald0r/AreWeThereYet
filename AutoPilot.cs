@@ -109,19 +109,33 @@ public class AutoPilot
         try
         {
             const float LEADER_BREADCRUMB_DISTANCE = 50f;
-            var lastBreadcrumbPos = tasks.LastOrDefault(t => t.Type == TaskNodeType.Movement)?.WorldPosition ?? lastPlayerPosition;
+            var movementTasks = tasks.Where(t => t.Type == TaskNodeType.Movement).ToList();
 
-            if (Vector3.Distance(leaderPos, lastBreadcrumbPos) >= LEADER_BREADCRUMB_DISTANCE)
+            // The start of our new path segment is either the last breadcrumb or the player's current position.
+            var startPos = movementTasks.LastOrDefault()?.WorldPosition ?? AreWeThereYet.Instance.playerPosition;
+
+            if (Vector3.Distance(leaderPos, startPos) >= LEADER_BREADCRUMB_DISTANCE)
             {
-                // The modern WorldToGrid() directly converts SharpDX.Vector3 to System.Numerics.Vector2
-                System.Numerics.Vector2 leaderGridPos = leaderPos.WorldToGrid();
+                var leaderGridPos = leaderPos.WorldToGrid();
 
                 if (TryFindNearestWalkablePosition(leaderGridPos, out var walkableGridPos))
                 {
-                    // The modern GridToWorld() directly converts System.Numerics.Vector2 to System.Numerics.Vector3
-                    Vector3 walkableWorldPos = walkableGridPos.GridToWorld(leaderPos.Z);
+                    var walkableWorldPos = walkableGridPos.GridToWorld(leaderPos.Z);
 
-                    tasks.Add(new TaskNode(walkableWorldPos, 40, TaskNodeType.Movement));
+                    // PRE-CALCULATE THE ACTION: Check LoS between the last waypoint and this new one.
+                    bool hasLineOfSight = LineOfSight.HasLineOfSight(startPos.WorldToGrid(), walkableGridPos);
+
+                    // Create the new task node.
+                    var newTask = new TaskNode(walkableWorldPos, 40, TaskNodeType.Movement);
+
+                    // If there is no line of sight on the trail, this segment requires a dash.
+                    if (!hasLineOfSight)
+                    {
+                        newTask.RequiredAction = PathingAction.Dash;
+                    }
+                    // Otherwise, the default 'Move' action is used.
+
+                    tasks.Add(newTask);
                 }
             }
         }
@@ -528,16 +542,35 @@ public class AutoPilot
                 }
 
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.PosNum);
-                if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+
+                // Check if we should be actively following the leader.
+                if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
                 {
-                    // We are far away, so we add the leader's position as a breadcrumb to follow.
-                    AddBreadcrumbTask(followTarget.PosNum);
+                    // CloseFollow is ON. We only generate new tasks if we are outside the desired range.
+                    if (distanceToLeader > AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                    {
+                        // We are too far away, so add a new breadcrumb using our improved function.
+                        AddBreadcrumbTask(followTarget.PosNum);
+                    }
+                    // If we are inside the range, we do nothing. This allows the bot to finish its
+                    // current trail and smoothly catch up without clearing the path.
                 }
-                // If CLOSE to leader -> Clear the path and do nothing, restoring the desired behavior.
                 else
                 {
-                    tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                    // CloseFollow is OFF. This means we want the "safe area" behavior.
+                    // If we are inside the KeepWithinDistance, the bot should rest.
+                    if (distanceToLeader <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                    {
+                        // We are in the safe zone, so clear the path to stop movement.
+                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                    }
+                    // If CloseFollow is OFF and we are OUTSIDE the distance, we still need to catch up.
+                    else
+                    {
+                        AddBreadcrumbTask(followTarget.PosNum);
+                    }
                 }
+
                 var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
                 if (!isHideout)
                 {
@@ -723,7 +756,7 @@ public class AutoPilot
             // --- STATE 2: Handle Continuous Movement ---
             else if (movementTasks.Any())
             {
-                // 1. QUERY: Ask our pure function for the best target.
+                // 1. QUERY: Find the best target. FindNextWaypoint checks for shortcuts.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
                 if (targetWaypoint == null)
@@ -737,21 +770,30 @@ public class AutoPilot
                     continue;
                 }
 
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
-                {
-                    AreWeThereYet.Instance.LogMessage($"[Movement] Target chosen: {targetWaypoint.WorldPosition.WorldToGrid()}. Path has {movementTasks.Count} nodes.", 5, Color.Yellow);
-                }
-    
-                // 2. DECIDE: Check if we should dash to that target.
-                bool canDash = AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value &&
-                               ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
+                // 2. DECIDE THE ACTION
+                bool shouldDash;
 
-                // 3. ACT: Perform the dash or move action.
-                if (canDash)
+                // A shortcut is any waypoint that is not the very first one in our list.
+                bool isTakingShortcut = movementTasks.IndexOf(targetWaypoint) > 0;
+
+                if (isTakingShortcut)
+                {
+                    // If we are taking a shortcut, it is because FindNextWaypoint found a clear line of sight.
+                    // Therefore, the action is ALWAYS Move. No dash is needed.
+                    shouldDash = false;
+                }
+                else
+                {
+                    // If we are following the normal trail, we execute the pre-calculated action.
+                    shouldDash = targetWaypoint.RequiredAction == PathingAction.Dash;
+                }
+
+                // 3. ACT on the decision
+                if (shouldDash)
                 {
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
                     {
-                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Dashing.", 5, Color.Cyan);
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Dashing. (Reason: Pre-Calculated Path)", 5, Color.Cyan);
                     }
         
                     // DASHING: Release the move key and perform a dash.
@@ -767,11 +809,12 @@ public class AutoPilot
                     Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.DashKey);
                     yield return new WaitTime(250); // Wait for dash cooldown/animation before re-evaluating.
                 }
-                else // NOT DASHING: Perform normal continuous movement.
+                else // Move normally
                 {
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
                     {
-                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Moving.", 5, Color.White);
+                        string reason = isTakingShortcut ? "Shortcut Found" : "Clear Path";
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Moving. (Reason: {reason})", 5, Color.White);
                     }
         
                     // Press and hold the move key if it's not already held.
@@ -785,10 +828,9 @@ public class AutoPilot
                 }
 
                 // 4. CLEANUP: Now that the action is done, the main loop cleans up the task list.
-                int targetIndex = movementTasks.IndexOf(targetWaypoint);
-                if (targetIndex > 0)
+                if (isTakingShortcut)
                 {
-                    // If we took a shortcut, remove the skipped breadcrumbs.
+                    int targetIndex = movementTasks.IndexOf(targetWaypoint);
                     for (int i = 0; i < targetIndex; i++)
                     {
                         tasks.Remove(movementTasks[i]);
