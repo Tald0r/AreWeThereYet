@@ -187,39 +187,41 @@ public class AutoPilot
 
     private TaskNode FindNextWaypoint(List<TaskNode> path, Vector3 playerPos)
     {
-        if (path == null || !path.Any())
+        if (path == null || path.Count == 0)
         {
             return null;
         }
 
         var playerGridPos = playerPos.WorldToGrid();
 
-        // Look ahead for a valid, visible shortcut.
+        // --- SMART SHORTCUT LOGIC ---
         const int lookAheadLimit = 5;
         for (int i = Math.Min(path.Count - 1, lookAheadLimit); i > 0; i--)
         {
             var potentialShortcutNode = path[i];
+            var shortcutGridPos = potentialShortcutNode.WorldPosition.WorldToGrid();
 
+            // THE GATEKEEPER CHECK:
+            // Before doing anything else, confirm the path to this shortcut is not blocked by a solid wall.
+            if (LineOfSight.IsPathBlockedByImpassable(playerGridPos, shortcutGridPos))
+            {
+                // This shortcut is impossible (e.g., the pink line in the screenshot).
+                // Skip it and check the next one.
+                continue;
+            }
+
+            // If the path is not blocked by a wall, it is a valid candidate.
+            // It might be clear, or it might require a dash, but it is possible.
+            // We can now safely return it. The main loop will use ShouldUseDash() to determine the action.
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
             {
-                AreWeThereYet.Instance.LogMessage($"[FindNext] Checking shortcut to node {i} at {potentialShortcutNode.WorldPosition}", 5, Color.Gray);
+                AreWeThereYet.Instance.LogMessage($"[FindNext] -> Found VALID shortcut to node {i}. Path is not blocked by impassable terrain.", 5, Color.LimeGreen);
             }
-
-            if (LineOfSight.HasLineOfSight(playerGridPos, potentialShortcutNode.WorldPosition.WorldToGrid()))
-            {
-                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
-                {
-                    AreWeThereYet.Instance.LogMessage($"[FindNext] -> SUCCESS! Can see node {i}. Taking shortcut.", 5, Color.LimeGreen);
-                }
-                return potentialShortcutNode;
-            }
+            return potentialShortcutNode;
         }
 
-        // If no shortcuts are visible, our best target is the very next point on the path.
-        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value && path.Any())
-        {
-            AreWeThereYet.Instance.LogMessage($"[FindNext] -> No shortcuts found. Defaulting to next node at {path.First().WorldPosition}", 5, Color.Orange);
-        }
+        // --- DEFAULT TRAIL-FOLLOWING LOGIC ---
+        // If no valid shortcuts were found, default to the next node on the trail.
         return path.First();
     }
 
@@ -756,7 +758,8 @@ public class AutoPilot
             // --- STATE 2: Handle Continuous Movement ---
             else if (movementTasks.Any())
             {
-                // 1. QUERY: Find the best target. FindNextWaypoint checks for shortcuts.
+                // 1. QUERY: Get a VALID target from our intelligent gatekeeper function.
+                // FindNextWaypoint will NEVER return a target that requires moving through a wall.
                 var targetWaypoint = FindNextWaypoint(movementTasks, AreWeThereYet.Instance.playerPosition);
 
                 if (targetWaypoint == null)
@@ -770,33 +773,19 @@ public class AutoPilot
                     continue;
                 }
 
-                // 2. DECIDE THE ACTION
-                bool shouldDash;
+                // 2. DECIDE: Use your critical ShouldUseDash() function on the VALID target.
+                // This call is now SAFE. It will correctly return true for dashable obstacles
+                // and false for clear paths, because it will never be given an impossible path to check.
+                bool shouldDash = ShouldUseDash(targetWaypoint.WorldPosition.WorldToGrid());
 
-                // A shortcut is any waypoint that is not the very first one in our list.
-                bool isTakingShortcut = movementTasks.IndexOf(targetWaypoint) > 0;
-
-                if (isTakingShortcut)
-                {
-                    // If we are taking a shortcut, it is because FindNextWaypoint found a clear line of sight.
-                    // Therefore, the action is ALWAYS Move. No dash is needed.
-                    shouldDash = false;
-                }
-                else
-                {
-                    // If we are following the normal trail, we execute the pre-calculated action.
-                    shouldDash = targetWaypoint.RequiredAction == PathingAction.Dash;
-                }
-
-                // 3. ACT on the decision
-                if (shouldDash)
+                // 3. ACT: Execute the action determined by ShouldUseDash().
+                if (shouldDash && AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled.Value)
                 {
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
                     {
-                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Dashing. (Reason: Pre-Calculated Path)", 5, Color.Cyan);
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Dashing. (Instruction from ShouldUseDash)", 5, Color.Cyan);
                     }
-        
-                    // DASHING: Release the move key and perform a dash.
+
                     if (isMoveKeyPressed)
                     {
                         Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
@@ -804,33 +793,29 @@ public class AutoPilot
                         yield return new WaitTime(50);
                     }
 
-                    // Aim and press the dash key.
                     yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(targetWaypoint.WorldPosition));
                     Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.DashKey);
-                    yield return new WaitTime(250); // Wait for dash cooldown/animation before re-evaluating.
+                    yield return new WaitTime(250);
                 }
-                else // Move normally
+                else // Action is Move
                 {
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug.Value)
                     {
-                        string reason = isTakingShortcut ? "Shortcut Found" : "Clear Path";
-                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Moving. (Reason: {reason})", 5, Color.White);
+                        AreWeThereYet.Instance.LogMessage($"[Movement] -> ACTION: Moving. (Instruction from ShouldUseDash)", 5, Color.White);
                     }
-        
-                    // Press and hold the move key if it's not already held.
+
                     if (!isMoveKeyPressed)
                     {
                         Keyboard.KeyDown(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         isMoveKeyPressed = true;
                     }
-                    // STEER: Continuously aim the mouse at the target waypoint.
                     yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(targetWaypoint.WorldPosition));
                 }
 
-                // 4. CLEANUP: Now that the action is done, the main loop cleans up the task list.
-                if (isTakingShortcut)
+                // 4. CLEANUP: This logic remains the same and is correct.
+                int targetIndex = movementTasks.IndexOf(targetWaypoint);
+                if (targetIndex > 0)
                 {
-                    int targetIndex = movementTasks.IndexOf(targetWaypoint);
                     for (int i = 0; i < targetIndex; i++)
                     {
                         tasks.Remove(movementTasks[i]);
@@ -841,7 +826,6 @@ public class AutoPilot
                     }
                 }
 
-                // Always check if we have reached the current first node.
                 var firstNode = tasks.FirstOrDefault(t => t.Type == TaskNodeType.Movement);
                 if (firstNode != null && Vector3.Distance(AreWeThereYet.Instance.playerPosition, firstNode.WorldPosition) <= 40f)
                 {
@@ -852,7 +836,7 @@ public class AutoPilot
                     tasks.Remove(firstNode);
                 }
             }
-            
+
             // --- STATE 3: IDLE (No tasks) ---
             else
             {

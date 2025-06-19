@@ -265,6 +265,40 @@ namespace AreWeThereYet.Utils
             }
         }
 
+        public bool IsPathBlockedByImpassable(Vector2 start, Vector2 end)
+        {
+            // This is a specialized trace that ONLY checks for impassable walls (value 0 or 1).
+            // It will return false if the path is clear OR if it's only blocked by dashable terrain.
+            lock (_terrainDataLock)
+            {
+                var startX = (int)start.X;
+                var startY = (int)start.Y;
+                var endX = (int)end.X;
+                var endY = (int)end.Y;
+
+                if (!IsInBounds(startX, startY) || !IsInBounds(endX, endY)) return true;
+
+                var dx = Math.Abs(endX - startX);
+                var dy = -Math.Abs(endY - startY);
+                var sx = startX < endX ? 1 : -1;
+                var sy = startY < endY ? 1 : -1;
+                var err = dx + dy;
+
+                while (true)
+                {
+                    // A terrain value of 0 or 1 is an impassable wall.
+                    if (GetTerrainValue(new Vector2(startX, startY)) <= 1) return true;
+
+                    if (startX == endX && startY == endY) break;
+
+                    var e2 = 2 * err;
+                    if (e2 >= dy) { err += dy; startX += sx; }
+                    if (e2 <= dx) { err += dx; startY += sy; }
+                }
+                return false; // No impassable walls were found.
+            }
+        }
+
         /// <summary>
         /// Main line-of-sight check - refresh now handled by render loop
         /// </summary>
