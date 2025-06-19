@@ -284,14 +284,14 @@ public class AutoPilot
                 clickPos.Value.X + random.Next(-15, 15),
                 clickPos.Value.Y + random.Next(-10, 10)));
         }
-	        
+        
         yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency));
     }
 
     private IEnumerator PostTransitionGracePeriod()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        const int TIMEOUT_MS = 10000; // 10-second timeout to prevent getting stuck forever.
+        const int TIMEOUT_MS = 10000; // 10-second timeout.
 
         if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
         {
@@ -304,10 +304,7 @@ public class AutoPilot
             var followTarget = GetFollowingTarget();
             var currentAreaName = AreWeThereYet.Instance.GameController.Area.CurrentArea.DisplayName;
 
-            // The state is considered synced ONLY when all three conditions are met:
-            // 1. We can read the leader's party element.
-            // 2. The leader's entity has appeared in the entity list.
-            // 3. The party UI confirms the leader is in the same zone as us.
+            // Success Condition: The leader's entity is found and they are in the same zone as us.
             if (leaderPartyElement != null && followTarget != null && leaderPartyElement.ZoneName.Equals(currentAreaName))
             {
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
@@ -319,16 +316,52 @@ public class AutoPilot
                 yield break;              // Exit the coroutine.
             }
 
-            // If not synced, wait a short moment before checking again to avoid high CPU usage.
             yield return new WaitTime(100);
         }
 
-        // If we reach here, the loop timed out.
-        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+        // If we reach here, the loop timed out. Now we must determine why.
+        var finalLeaderPartyElement = GetLeaderPartyElement();
+        var finalCurrentAreaName = AreWeThereYet.Instance.GameController.Area.CurrentArea.DisplayName;
+
+        // --- THE NEW FAILSAFE LOGIC ---
+        // Check for the "Same Zone, Different Instance" problem.
+        if (finalLeaderPartyElement != null && finalLeaderPartyElement.ZoneName.Equals(finalCurrentAreaName))
         {
-            AreWeThereYet.Instance.LogMessage("[GracePeriod] TIMEOUT: Leader entity did not sync after 10 seconds. Resuming logic with fallback.", 5, Color.Red);
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage($"[GracePeriod] DEADLOCK DETECTED: In same zone ('{finalCurrentAreaName}') but different instance. Forcing UI teleport to sync instances.", 10, Color.Red);
+            }
+
+            // Check for and click the "Are you sure?" confirmation box if it's open.
+            var tpConfirmation = GetTpConfirmation();
+            if (tpConfirmation != null)
+            {
+                yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                yield return new WaitTime(200);
+                yield return Mouse.LeftClick();
+                yield return new WaitTime(1000);
+            }
+
+            // Click the teleport button on the party UI to force an instance sync.
+            var tpButton = GetTpButton(finalLeaderPartyElement);
+            if (!tpButton.Equals(Vector2.Zero))
+            {
+                yield return Mouse.SetCursorPosHuman(tpButton, false);
+                yield return new WaitTime(200);
+                yield return Mouse.LeftClick();
+                yield return new WaitTime(200);
+            }
         }
-        _isTransitioning = false; // Unlock the main logic anyway to prevent getting permanently stuck.
+        else
+        {
+            // The timeout was for a different reason (e.g., leader zoned again). Let the main logic handle it.
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage("[GracePeriod] TIMEOUT: Leader entity did not sync. Resuming logic with fallback.", 5, Color.Orange);
+            }
+        }
+
+        _isTransitioning = false; // Unlock the main logic in all timeout cases.
     }
 
     private IEnumerator AutoPilotLogic()
