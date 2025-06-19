@@ -29,6 +29,8 @@ public class AutoPilot
     private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
     private Entity _lastKnownLeaderPortal = null;
+    private string _lastKnownLeaderZone = "";
+    private DateTime _leaderZoneChangeTime = DateTime.MinValue;
     private bool _isTransitioning = false;
 
     private void ResetPathing()
@@ -78,6 +80,30 @@ public class AutoPilot
     }
     
 
+    private bool IsLeaderZoneInfoReliable(PartyElementWindow leaderPartyElement)
+    {
+        try
+        {
+            // Check if zone name looks valid (not empty, not obviously stale)
+            var zoneName = leaderPartyElement.ZoneName;
+            var currentZone = AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName;
+            
+            // Invalid if empty or same as current zone when leader should be elsewhere
+            if (string.IsNullOrEmpty(zoneName) || zoneName.Equals(currentZone))
+                return false;
+                
+            // Check if zone name changed very recently (might still be updating)
+            var timeSinceChange = DateTime.Now - _leaderZoneChangeTime;
+            if (timeSinceChange < TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.ZoneUpdateBuffer.Value))
+                return false;
+                
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private LabelOnGround GetBestPortalLabel(PartyElementWindow leaderPartyElement)
     {
@@ -335,7 +361,7 @@ public class AutoPilot
             // SECTION 2: TASK GENERATION LOGIC
             // =================================================================
 
-            // Case 1: The leader is no longer in our current zone. This is the primary check.
+            // Case 1: The leader is no longer in our current zone.
             if (followTarget == null && leaderPartyElement != null && !_isTransitioning)
             {
                 // If we already have a transition task, do nothing and let it execute.
@@ -345,52 +371,85 @@ public class AutoPilot
                     continue;
                 }
 
-                // --- PRIORITY 1: Use the precise portal memory. This is the fastest and most reliable method. ---
+                // --- LAYER 1: Try the precise portal memory first. This is the best-case scenario. ---
                 if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
                 {
                     var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                    .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+
                     if (portalLabel != null)
                     {
                         if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            AreWeThereYet.Instance.LogMessage($"[PortalMemory] Leader is gone and left a portal. Using exact portal: {portalLabel.ItemOnGround.Metadata}.");
+                            AreWeThereYet.Instance.LogMessage($"[PortalMemory] Leader is gone. Using exact portal memory: {portalLabel.ItemOnGround.Metadata}.");
                         }
-                        tasks.Add(new TaskNode(portalLabel, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
-                        
-                        // TODO: not sure about this if it can be pushed to TOP without breaking anything
-                        // // Insert at the front to make it the absolute highest priority.
-                        // tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
+                        tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
                     }
 
                     // Use the memory once, then clear it to prevent getting stuck on a stale portal reference.
                     _lastKnownLeaderPortal = null;
                 }
-                // --- FALLBACK: If no portal memory exists, use the party UI teleport button. ---
+                // --- LAYER 2: If memory failed, wait for reliable zone info and then scan for the correct portal. ---
                 else
                 {
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    // This logic handles the zone name update and buffer time.
+                    if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
                     {
-                        AreWeThereYet.Instance.LogMessage("[Fallback] Leader is gone and no portal memory exists. Using party UI teleport button.");
+                        _lastKnownLeaderZone = leaderPartyElement.ZoneName;
+                        _leaderZoneChangeTime = DateTime.Now;
                     }
 
-                    // Check for and click the "Are you sure?" confirmation box if it's open.
-                    var tpConfirmation = GetTpConfirmation();
-                    if (tpConfirmation != null)
+                    if (IsLeaderZoneInfoReliable(leaderPartyElement))
                     {
-                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
-                        yield return new WaitTime(1000);
-                    }
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[PortalScan] Zone info is reliable ('{leaderPartyElement.ZoneName}'). Scanning for matching portal on ground.");
+                        }
 
-                    // Click the teleport button on the party UI.
-                    var tpButton = GetTpButton(leaderPartyElement);
-                    if (!tpButton.Equals(Vector2.Zero))
+                        // Now that we have a reliable zone name, scan for a portal with matching text.
+                        var portal = GetBestPortalLabel(leaderPartyElement);
+                        if (portal != null)
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"[PortalScan] SUCCESS: Found matching portal on ground: '{portal.Label.Text}'.");
+                            }
+                            tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
+                        }
+                        // --- LAYER 3: If the scan also fails, use the final fallback: the UI teleport button. ---
+                        else
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage("[Fallback] No matching portal found on ground. Using party UI teleport button.");
+                            }
+
+                            var tpConfirmation = GetTpConfirmation();
+                            if (tpConfirmation != null)
+                            {
+                                yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                                yield return new WaitTime(200);
+                                yield return Mouse.LeftClick();
+                                yield return new WaitTime(1000);
+                            }
+
+                            var tpButton = GetTpButton(leaderPartyElement);
+                            if (!tpButton.Equals(Vector2.Zero))
+                            {
+                                yield return Mouse.SetCursorPosHuman(tpButton, false);
+                                yield return new WaitTime(200);
+                                yield return Mouse.LeftClick();
+                                yield return new WaitTime(200);
+                            }
+                        }
+                    }
+                    else
                     {
-                        yield return Mouse.SetCursorPosHuman(tpButton, false);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
+                        // The party UI is not ready yet. We must wait.
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage("[PortalScan] Waiting for reliable zone info from party UI...");
+                        }
                         yield return new WaitTime(200);
                     }
                 }
