@@ -491,15 +491,58 @@ public class AutoPilot
             // Case 2: Leader is in the same zone.
             else if (followTarget != null)
             {
-                // --- Record when the leader targets a portal ---
+                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                
+                // --- NEW, RELIABLE SAME-ZONE TRANSITION DETECTION ---
+                if (!tasks.Any(t => t.Type == TaskNodeType.Movement))
+                {
+                    if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
+                    {
+                        const float TELEPORT_DISTANCE_THRESHOLD = 150f;
+
+                        if (distanceToLeader > TELEPORT_DISTANCE_THRESHOLD)
+                        {
+                            var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                                .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+
+                            if (portalLabel != null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Arrived at destination and leader has teleported. Using last known portal: {_lastKnownLeaderPortal.Metadata}");
+                                }
+                                tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
+                            }
+                            _lastKnownLeaderPortal = null;
+                        }
+                    }
+                }
+
+                // --- Record when the leader is near a portal ---
                 var leaderActor = followTarget.GetComponent<Actor>();
                 if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                 {
+                    // Prioritize the leader's direct action target. This is the most accurate.
                     _lastKnownLeaderPortal = target;
                 }
+                else
+                {
+                    // If the leader isn't actively targeting a portal, check if they are standing near one.
+                    // We can reuse GetBestPortalLabel for this, but we need a dummy party element.
+                    var dummyPartyElement = new PartyElementWindow { ZoneName = "" }; // ZoneName is not used for this check.
+                    var closestPortalLabel = GetBestPortalLabel(dummyPartyElement);
+                    
+                    if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < 40)
+                    {
+                        _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
+                    }
+                    else
+                    {
+                        // If the leader is not near any portal, clear the memory.
+                        _lastKnownLeaderPortal = null;
+                    }
+                }
                 // --- Follow logic ---
-                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     var distanceMoved = Vector3.Distance(lastTargetPosition, followTarget.Pos);
