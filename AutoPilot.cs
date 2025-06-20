@@ -414,12 +414,16 @@ public class AutoPilot
                 // Condition A: The leader moved an impossible distance in a single tick.
                 if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
                 {
+                    AreWeThereYet.Instance.LogMessage($"DEBUG1: The leader moved an impossible distance in a single tick: {distanceMoved}");
+                    
                     // Condition B: We have a memory of the leader being near a portal right before they moved.
                     if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
                     {
+                        AreWeThereYet.Instance.LogMessage($"DEBUG2: We have a memory of the leader being near a portal right before they moved.");
                         // We have confirmed a same-zone teleport.
                         if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
                         {
+                            AreWeThereYet.Instance.LogMessage($"DEBUG3: We have confirmed a same-zone teleport.");
                             var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
                                                 .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
 
@@ -448,18 +452,22 @@ public class AutoPilot
                 if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                 {
                     _lastKnownLeaderPortal = target;
+                    AreWeThereYet.Instance.LogMessage($"DEBUG4: Last known Leader Portal: {_lastKnownLeaderPortal}");
                 }
                 else
                 {
                     // If the leader isn't actively targeting a portal, check if they are standing near one.
                     var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
-                    if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < 40)
+                    if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < 100)
                     {
+                        AreWeThereYet.Instance.LogMessage($"DEBUG5: Portal near Leader: {_lastKnownLeaderPortal}");
                         _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
                     }
                     else
                     {
+                        AreWeThereYet.Instance.LogMessage($"DEBUG6: Last known Leader Portal WAS: {_lastKnownLeaderPortal}");
                         _lastKnownLeaderPortal = null;
+                        AreWeThereYet.Instance.LogMessage($"DEBUG7: Last known Leader Portal WAS NULLED");
                     }
                 }
 
@@ -1006,7 +1014,7 @@ public class AutoPilot
                 var taskTypeName = cachedTasks[0].Type == TaskNodeType.MercenaryOptIn ? "Mercenary OPT-IN" : cachedTasks[0].Type.ToString();
                 AreWeThereYet.Instance.Graphics.DrawText(
                     "Current Task: " + taskTypeName,
-                    new Vector2(500, 180));
+                    new Vector2(500, 280));
                 foreach (var task in cachedTasks.TakeWhile(task => task?.WorldPosition != null))
                 {
                     if (taskCount == 0)
@@ -1029,19 +1037,19 @@ public class AutoPilot
             {
                 var targetDist = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastTargetPosition);
                 AreWeThereYet.Instance.Graphics.DrawText(
-                    $"Follow Enabled: {AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value}", new System.Numerics.Vector2(500, 120));
+                    $"Follow Enabled: {AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value}", new System.Numerics.Vector2(500, 220));
                 AreWeThereYet.Instance.Graphics.DrawText(
                     $"Task Count: {taskCount:D} Next WP Distance: {dist:F} Target Distance: {targetDist:F}",
-                    new System.Numerics.Vector2(500, 140));
+                    new System.Numerics.Vector2(500, 240));
             }
         }
         catch (Exception)
         {
         }
 
-        AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 120));
-        AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
-        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
-        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490, 210), 1, Color.White);
+        AreWeThereYet.Instance.Graphics.DrawText("AutoPilot: Active", new System.Numerics.Vector2(350, 220));
+        AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 240));
+        AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 260));
+        AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 210), new System.Numerics.Vector2(490, 310), 1, Color.White);
     }
 }
