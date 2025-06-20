@@ -33,6 +33,12 @@ public class AutoPilot
     private DateTime _leaderLastSeen  = DateTime.MinValue;
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
     private bool _isTransitioning = false;
+    
+    private const float TELEPORT_DISTANCE_THRESHOLD = 250f;
+    private const float NEAR_PORTAL_RADIUS = 250f;
+    private const int PORTAL_MEMORY_LIFESPAN_MS = 1000; // How long to remember a portal in milliseconds.
+    private DateTime _portalMemoryExpiresAt = DateTime.MinValue; // The time when the memory becomes invalid.
+
 
     private void ResetPathing()
     {
@@ -404,33 +410,42 @@ public class AutoPilot
 
                 // Calculate how far the leader moved since the last frame.
                 float distanceMoved = Vector3.Distance(followTarget.Pos, lastTargetPosition);
-                const float TELEPORT_DISTANCE_THRESHOLD = 150f;
 
                 // --- FORK IN THE ROAD: Did the leader just teleport? ---
-                
 
-                // IF a teleport happened...
-                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD && _lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
+                // Condition A: The leader moved an impossible distance in a single tick. - DEBUG ONLY
+                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
                 {
-                    // ...then handle ONLY the transition logic.
-                    if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
+                    AreWeThereYet.Instance.LogMessage($"DEBUG1: The leader moved an impossible distance in a single tick: {distanceMoved}");
+                }
+                // IF a teleport happened...
+                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD && _lastKnownLeaderPortal != null)
+                {
+                // ...then handle ONLY the transition logic.
+                    AreWeThereYet.Instance.LogMessage($"DEBUG2: We have a memory of the leader being near a portal right before they moved.");
+                if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
+                {
+                    AreWeThereYet.Instance.LogMessage($"DEBUG3: We have confirmed a same-zone teleport.");
+                    var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+
+                    if (portalLabel != null)
                     {
-                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                            .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
-                        
-                        if (portalLabel != null)
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
-                            }
-                            tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
-                            tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
+                            AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
                         }
+                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
+                        tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
                     }
-                    _lastKnownLeaderPortal = null; 
-                    lastTargetPosition = followTarget.Pos; 
-                    continue; // Commit to the transition and restart the main loop.
+                }
+                _lastKnownLeaderPortal = null; // Consume the memory
+                
+                // IMPORTANT: Update lastTargetPosition immediately to prevent re-triggering on the next frame.
+                lastTargetPosition = followTarget.Pos;
+                _portalMemoryExpiresAt  = DateTime.MinValue;
+                
+                continue; // Commit to the transition and restart the main loop.
                 }
                 // ELSE (if no teleport happened)...
                 else
@@ -442,97 +457,114 @@ public class AutoPilot
                     if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                     {
                         _lastKnownLeaderPortal = target;
+                        AreWeThereYet.Instance.LogMessage($"DEBUG4: Last known Leader Portal: {_lastKnownLeaderPortal}");
+                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS); 
                     }
                     else
                     {
+                        // If the leader isn't actively targeting a portal, check if they are standing near one.
                         var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
-                        if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < 50)
+                        if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < NEAR_PORTAL_RADIUS)
                         {
+                            AreWeThereYet.Instance.LogMessage($"DEBUG5: Portal near Leader at {_lastKnownLeaderPortal}");
                             _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
+                            _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);                // refresh
                         }
                         else
                         {
-                            _lastKnownLeaderPortal = null;
+                            // keep the memory alive for PORTAL_MEMORY_LIFESPAN_MS
+                            if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
+                            {
+                                // still fresh – do nothing, just log
+                                AreWeThereYet.Instance.LogMessage(
+                                    $"DEBUG6: Memory still fresh ({(_portalMemoryExpiresAt - DateTime.Now).TotalMilliseconds:F0} ms)");
+                            }
+                            else
+                            {
+                                _lastKnownLeaderPortal = null;                     // really forget
+                                _portalMemoryExpiresAt = DateTime.MinValue;
+                                AreWeThereYet.Instance.LogMessage("DEBUG7: Portal memory EXPIRED and was nulled");
+                            }
                         }
                     }
 
-                // --- PRIORITY 3: Generate path for normal following. ---
-                // This logic will only run if no teleport was detected.
-                var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-                if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
-                {
-                    if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                    // --- PRIORITY 3: Generate path for normal following. ---
+                    // This logic will only run if no teleport was detected.
+                    var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                    if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                     {
-                        var transition = GetBestPortalLabel(leaderPartyElement);
-                        if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
-                            tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
-                    }
-                    else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
-                    {
-                        tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
-
-                    else if (tasks.Count > 0)
-                    {
-                        var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
-                        if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance)
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
-                }
-                else
-                {
-                    if (tasks.Count > 0)
-                    {
-                        for (var i = tasks.Count - 1; i >= 0; i--)
-                            if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
-                                tasks.RemoveAt(i);
-                        yield return null;
-                    }
-                    if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
-                    {
-                        if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                    }
-
-                    // --- Quest Item and other interaction logic ---
-                    var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
-                    if (!isHideout)
-                    {
-                        var questLoot = GetQuestItem();
-                        if (questLoot != null &&
-                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                        if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                         {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            var transition = GetBestPortalLabel(leaderPartyElement);
+                            if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
+                                tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
+                        }
+                        else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
+                        {
+                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+
+                        else if (tasks.Count > 0)
+                        {
+                            var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
+                            if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance)
+                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+                    }
+                    else
+                    {
+                        if (tasks.Count > 0)
+                        {
+                            for (var i = tasks.Count - 1; i >= 0; i--)
+                                if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
+                                    tasks.RemoveAt(i);
+                            yield return null;
+                        }
+                        if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
+                        {
+                            if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+
+                        // --- Quest Item and other interaction logic ---
+                        var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+                        if (!isHideout)
+                        {
+                            var questLoot = GetQuestItem();
+                            if (questLoot != null &&
+                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                    AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                                }
+                                tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+                            }
+                            else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                             {
                                 var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                                AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                                var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
+                                AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
                             }
-                            tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
-                        }
-                        else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                            var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
-                            AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
-                        }
 
-                        var mercenaryOptIn = GetMercenaryOptInButton();
-                        if (mercenaryOptIn != null &&
-                            Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                            tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            var mercenaryOptIn = GetMercenaryOptInButton();
+                            if (mercenaryOptIn != null &&
+                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
                             {
-                                AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                                }
+                                tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                             }
-                            tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
                         }
-                    }
 
-                }
-                if (followTarget?.Pos != null)
-                    lastTargetPosition = followTarget.Pos;
+                    }
+                    if (followTarget?.Pos != null)
+                        lastTargetPosition = followTarget.Pos;
                 }
             }
             
