@@ -246,7 +246,6 @@ public class AutoPilot
         }
     }
 
-
     private Vector2 GetTpButton(PartyElementWindow leaderPartyElement)
     {
         try
@@ -280,6 +279,27 @@ public class AutoPilot
         }
     }
 
+    private string GetPortalDestinationName(Entity portalEntity)
+    {
+        if (portalEntity == null) return null;
+
+        // Case 1: It's a static AreaTransition (like stairs or a zone exit)
+        if (portalEntity.Type == EntityType.AreaTransition)
+        {
+            return portalEntity.GetComponent<AreaTransition>()?.WorldArea?.Name;
+        }
+
+        // Case 2: It's a player-created TownPortal
+        if (portalEntity.Type == EntityType.TownPortal)
+        {
+            // Your brilliant discovery: the path to the destination name.
+            return portalEntity.GetComponent<Portal>()?.Area?.Name;
+        }
+
+        // If it's some other type of entity, return null.
+        return null;
+    }
+
     private IEnumerator MouseoverItem(Entity item)
     {
         var uiLoot = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels.FirstOrDefault(I => I.IsVisible && I.ItemOnGround.Id == item.Id);
@@ -291,7 +311,7 @@ public class AutoPilot
                 clickPos.Value.X + random.Next(-15, 15),
                 clickPos.Value.Y + random.Next(-10, 10)));
         }
-        
+
         yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency));
     }
 
@@ -413,39 +433,46 @@ public class AutoPilot
 
                 // --- FORK IN THE ROAD: Did the leader just teleport? ---
 
-                // Condition A: The leader moved an impossible distance in a single tick. - DEBUG ONLY
                 if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
                 {
-                    AreWeThereYet.Instance.LogMessage($"DEBUG1: The leader moved an impossible distance in a single tick: {distanceMoved}");
-                }
-                // IF a teleport happened...
-                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD && _lastKnownLeaderPortal != null)
-                {
-                // ...then handle ONLY the transition logic.
-                    AreWeThereYet.Instance.LogMessage($"DEBUG2: We have a memory of the leader being near a portal right before they moved.");
-                if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
-                {
-                    AreWeThereYet.Instance.LogMessage($"DEBUG3: We have confirmed a same-zone teleport.");
-                    var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+                    AreWeThereYet.Instance.LogMessage($"DEBUG1: [SameZoneJump] Leader moved {distanceMoved:F0} units.");
 
-                    if (portalLabel != null)
+                    // Scan for a LOCAL transition near the leader's LAST known position.
+                    var localTransition = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
+                        .Select(label => label.ItemOnGround)
+                        .Where(entity => entity != null &&
+                                         entity.Type == EntityType.AreaTransition &&
+                                         entity.GetComponent<AreaTransition>()?.TransitionType == AreaTransitionType.Local &&
+                                         Vector3.Distance(lastTargetPosition, entity.Pos) < NEAR_PORTAL_RADIUS)
+                        .OrderBy(entity => Vector3.Distance(lastTargetPosition, entity.Pos))
+                        .FirstOrDefault();
+
+                    if (localTransition != null)
                     {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        AreWeThereYet.Instance.LogMessage($"DEBUG2: [Deduction] Found LOCAL transition: {localTransition.Metadata}. Creating task.");
+                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                            .FirstOrDefault(x => x.ItemOnGround.Id == localTransition.Id);
+
+                        if (portalLabel != null)
                         {
-                            AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[SameZoneJump] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
+                        }                        
+                            tasks.Clear();
+                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
                         }
-                        tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
-                        tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
                     }
-                }
-                _lastKnownLeaderPortal = null; // Consume the memory
-                
-                // IMPORTANT: Update lastTargetPosition immediately to prevent re-triggering on the next frame.
-                lastTargetPosition = followTarget.Pos;
-                _portalMemoryExpiresAt  = DateTime.MinValue;
-                
-                continue; // Commit to the transition and restart the main loop.
+                    else
+                    {
+                        AreWeThereYet.Instance.LogMessage("WARNING: Detected a same-zone jump but found no LOCAL transition nearby.");
+                    }
+
+                    // IMPORTANT: Update position and consume memory regardless, to prevent loops.
+                    lastTargetPosition = followTarget.Pos;
+                    _lastKnownLeaderPortal = null;
+                    _portalMemoryExpiresAt = DateTime.MinValue;
+                    continue; // Commit to the transition and restart the main loop.
                 }
                 // ELSE (if no teleport happened)...
                 else
@@ -457,8 +484,8 @@ public class AutoPilot
                     if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                     {
                         _lastKnownLeaderPortal = target;
-                        AreWeThereYet.Instance.LogMessage($"DEBUG4: Last known Leader Portal: {_lastKnownLeaderPortal}");
-                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS); 
+                        AreWeThereYet.Instance.LogMessage($"DEBUG3: Last known Leader Portal: {_lastKnownLeaderPortal}");
+                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);
                     }
                     else
                     {
@@ -466,7 +493,7 @@ public class AutoPilot
                         var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
                         if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < NEAR_PORTAL_RADIUS)
                         {
-                            AreWeThereYet.Instance.LogMessage($"DEBUG5: Portal near Leader at {_lastKnownLeaderPortal}");
+                            AreWeThereYet.Instance.LogMessage($"DEBUG4: Portal near Leader at {_lastKnownLeaderPortal}");
                             _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
                             _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);                // refresh
                         }
@@ -483,7 +510,7 @@ public class AutoPilot
                             {
                                 _lastKnownLeaderPortal = null;                     // really forget
                                 _portalMemoryExpiresAt = DateTime.MinValue;
-                                AreWeThereYet.Instance.LogMessage("DEBUG7: Portal memory EXPIRED and was nulled");
+                                AreWeThereYet.Instance.LogMessage("DEBUG5: Portal memory EXPIRED and was nulled");
                             }
                         }
                     }
@@ -567,7 +594,7 @@ public class AutoPilot
                         lastTargetPosition = followTarget.Pos;
                 }
             }
-            
+
             // Case 2: The leader entity is NOT currently visible.
             else if (followTarget == null && leaderPartyElement != null && !_isTransitioning)
             {
@@ -593,86 +620,114 @@ public class AutoPilot
                 }
 
                 // --- LAYER 1: Try the precise portal memory first. This is the best-case scenario. ---
-                if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
+                if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
                 {
                     var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
                                         .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
 
+                    // Only consume memory and continue IF we successfully find the label and create a task.
                     if (portalLabel != null)
                     {
                         if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            AreWeThereYet.Instance.LogMessage($"[PortalMemory] Leader is gone. Using exact portal memory: {portalLabel.ItemOnGround.Metadata}.");
+                            AreWeThereYet.Instance.LogMessage($"[Layer 1: Memory] SUCCESS: Found portal on screen. Using fresh memory: {_lastKnownLeaderPortal.Metadata}");
                         }
-                        tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
-                    }
+                        tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
 
-                    // Use the memory once, then clear it to prevent getting stuck on a stale portal reference.
-                    _lastKnownLeaderPortal = null;
-                }
-                // --- LAYER 2: If memory failed, wait for reliable zone info and then scan for the correct portal. ---
-                else
-                {
-                    // This logic handles the zone name update and buffer time.
-                    if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
-                    {
-                        _lastKnownLeaderZone = leaderPartyElement.ZoneName;
-                        _leaderZoneChangeTime = DateTime.Now;
-                    }
-
-                    if (IsLeaderZoneInfoReliable(leaderPartyElement))
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[PortalScan] Zone info is reliable ('{leaderPartyElement.ZoneName}'). Scanning for matching portal on ground.");
-                        }
-
-                        // Now that we have a reliable zone name, scan for a portal with matching text.
-                        var portal = GetBestPortalLabel(leaderPartyElement);
-                        if (portal != null)
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage($"[PortalScan] SUCCESS: Found matching portal on ground: '{portal.Label.Text}'.");
-                            }
-                            tasks.Add(new TaskNode(portal, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value, TaskNodeType.Transition));
-                        }
-                        // --- LAYER 3: If the scan also fails, use the final fallback: the UI teleport button. ---
-                        else
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage("[Fallback] No matching portal found on ground. Using party UI teleport button.");
-                            }
-
-                            var tpConfirmation = GetTpConfirmation();
-                            if (tpConfirmation != null)
-                            {
-                                yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
-                                yield return new WaitTime(200);
-                                yield return Mouse.LeftClick();
-                                yield return new WaitTime(1000);
-                            }
-
-                            var tpButton = GetTpButton(leaderPartyElement);
-                            if (!tpButton.Equals(Vector2.Zero))
-                            {
-                                yield return Mouse.SetCursorPosHuman(tpButton, false);
-                                yield return new WaitTime(200);
-                                yield return Mouse.LeftClick();
-                                yield return new WaitTime(200);
-                            }
-                        }
+                        // Consume memory and exit logic for this frame.
+                        _lastKnownLeaderPortal = null;
+                        _portalMemoryExpiresAt = DateTime.MinValue;
+                        continue;
                     }
                     else
                     {
-                        // The party UI is not ready yet. We must wait.
                         if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                         {
-                            AreWeThereYet.Instance.LogMessage("[PortalScan] Waiting for reliable zone info from party UI...");
+                            AreWeThereYet.Instance.LogMessage("[Layer 1: Memory] INFO: Have memory, but portal is not on screen. Will try again.");
                         }
+                    }
+                }
+
+                // --- If Layer 1 failed or had no memory, proceed to subsequent layers ---
+                if (IsLeaderZoneInfoReliable(leaderPartyElement))
+                {
+                    var targetZoneName = leaderPartyElement.ZoneName;
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[System] Party UI is reliable. Target zone: '{targetZoneName}'");
+                    }
+
+                    // --- LAYER 2: Unified Smart Scan ---
+                    var allPortals = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
+                        .Concat(AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.TownPortal]);
+
+                    var smartFoundPortal = allPortals.FirstOrDefault(e =>
+                    {
+                        var destinationName = GetPortalDestinationName(e);
+                        return !string.IsNullOrEmpty(destinationName) &&
+                               string.Equals(destinationName, targetZoneName, StringComparison.OrdinalIgnoreCase);
+                    });
+
+                    if (smartFoundPortal != null)
+                    {
+                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                            .FirstOrDefault(x => x.ItemOnGround.Id == smartFoundPortal.Id);
+
+                        // Apply the same critical fix here.
+                        if (portalLabel != null)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[Layer 2: UnifiedScan] SUCCESS: Found entity on screen: {smartFoundPortal.Metadata}");
+                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
+                            continue; // Task created, we are done.
+                        }
+                    }
+
+                    // --- LAYER 3: Legacy Label Scan (Final Fallback) ---
+                    var portalByLabel = GetBestPortalLabel(leaderPartyElement);
+                    if (portalByLabel != null)
+                    {
+                        // Apply the same critical fix here.
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[Layer 3: LabelScan] SUCCESS: Found portal with matching label text: '{portalByLabel.Label.Text}'.");
+                        }
+                        tasks.Add(new TaskNode(portalByLabel, 200, TaskNodeType.Transition));
+                        continue; // Task created, we are done.
+                    }
+
+                    // --- LAYER 4: Final Fallback (Teleport Button) ---
+                    // This layer doesn't create a task in the same way, so it doesn't need the same check.
+                    // It directly performs actions.
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("[All Scans FAILED]. Falling back to Layer 4 (UI Teleport).");
+                    }
+                    var tpConfirmation = GetTpConfirmation();
+                    if (tpConfirmation != null)
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
+                        yield return new WaitTime(1000);
+                    }
+
+                    var tpButton = GetTpButton(leaderPartyElement);
+                    if (!tpButton.Equals(Vector2.Zero))
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpButton, false);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
                         yield return new WaitTime(200);
                     }
+                }
+                else
+                {
+
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("[System] Waiting for reliable zone info from party UI...");
+                    }
+                    yield return new WaitTime(200);
                 }
             }
 
