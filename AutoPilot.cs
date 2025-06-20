@@ -493,41 +493,48 @@ public class AutoPilot
             {
                 var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
                 
-                // --- PRIORITY 1: Check if we need to follow the leader through a same-zone portal. ---
-                // This is the most important action when the leader is present but far away.
+                // --- PRIORITY 1: DETECT A COMPLETED SAME-ZONE TELEPORT ---
+                // This MUST run before we update any state variables for the current frame.
 
-                // Condition A: We have previously recorded the leader was near a portal.
-                if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
+                // Calculate how far the leader moved since the last frame.
+
+                var distanceMoved = Vector3.Distance(followTarget.Pos, lastTargetPosition);
+                const float TELEPORT_DISTANCE_THRESHOLD = 150f;
+
+                // Condition A: The leader moved an impossible distance in a single tick.
+                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
                 {
-                    // Condition B: The leader has moved an impossibly large distance, confirming a teleport.
-                    const float TELEPORT_DISTANCE_THRESHOLD = 150f;
-
-                    if (distanceToLeader > TELEPORT_DISTANCE_THRESHOLD)
+                    // Condition B: We have a memory of the leader being near a portal right before they moved.
+                    if (_lastKnownLeaderPortal != null && _lastKnownLeaderPortal.IsValid)
                     {
                         // We have confirmed a same-zone teleport.
                         if (!tasks.Any(t => t.Type == TaskNodeType.Transition))
                         {
                             var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
                                                 .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
-
+                            
                             if (portalLabel != null)
                             {
                                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                                 {
-                                    AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Leader teleported {distanceToLeader:F0} units. Using last known portal: {_lastKnownLeaderPortal.Metadata}");
+                                    AreWeThereYet.Instance.LogMessage($"[SameZoneTeleport] Leader teleported {distanceMoved:F0} units. Using last known portal: {_lastKnownLeaderPortal.Metadata}");
                                 }
                                 // Clear all old movement tasks and create a single, high-priority transition task.
                                 tasks.RemoveAll(t => t.Type == TaskNodeType.Movement);
                                 tasks.Insert(0, new TaskNode(portalLabel, 50, TaskNodeType.Transition));
                                 _lastKnownLeaderPortal = null; // Consume the memory
+                                
+                                // IMPORTANT: Update lastTargetPosition immediately to prevent re-triggering on the next frame.
+                                lastTargetPosition = followTarget.Pos; 
+                                
                                 continue; // Commit to the transition and restart the main loop.
                             }
                         }
                     }
                 }
 
-                // --- PRIORITY 2: Record the leader's position for future teleports. ---
-                // This runs if a teleport wasn't detected.
+                // --- PRIORITY 2: RECORD THE LEADER'S CURRENT POSITION FOR THE *NEXT* FRAME ---
+                // This logic "arms" the system for a future teleport detection.
                 var leaderActor = followTarget.GetComponent<Actor>();
                 if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
                 {
@@ -551,7 +558,6 @@ public class AutoPilot
                 // This logic will only run if no teleport was detected.
                 if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
-                    var distanceMoved = Vector3.Distance(lastTargetPosition, followTarget.Pos);
                     if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                     {
                         var transition = GetBestPortalLabel(leaderPartyElement);
