@@ -438,14 +438,17 @@ public class AutoPilot
                     AreWeThereYet.Instance.LogMessage($"DEBUG1: [SameZoneJump] Leader moved {distanceMoved:F0} units.");
 
                     // Scan for a LOCAL transition near the leader's LAST known position.
-                    var localTransition = AreWeThereYet.Instance.GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabels
-                        .Select(label => label.ItemOnGround)
-                        .Where(entity => entity != null &&
-                                         entity.Type == EntityType.AreaTransition &&
-                                         entity.GetComponent<AreaTransition>()?.TransitionType == AreaTransitionType.Local &&
-                                         Vector3.Distance(lastTargetPosition, entity.Pos) < NEAR_PORTAL_RADIUS)
+                    var localTransition = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
+                        .Where(entity =>
+                        {
+                            var transition = entity.GetComponent<AreaTransition>();
+                            // This uses YOUR correct syntax for the enum comparison.
+                            return transition != null &&
+                                transition.TransitionType == AreaTransitionType.Local && 
+                                Vector3.Distance(lastTargetPosition, entity.Pos) < NEAR_PORTAL_RADIUS;
+                        })
                         .OrderBy(entity => Vector3.Distance(lastTargetPosition, entity.Pos))
-                        .FirstOrDefault();
+                        .FirstOrDefault();                        
 
                     if (localTransition != null)
                     {
@@ -456,9 +459,9 @@ public class AutoPilot
                         if (portalLabel != null)
                         {
                             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[SameZoneJump] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
-                        }                        
+                            {
+                                AreWeThereYet.Instance.LogMessage($"[SameZoneJump] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
+                            }
                             tasks.Clear();
                             tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
                         }
