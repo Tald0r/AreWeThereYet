@@ -404,9 +404,9 @@ public class AutoPilot
                 yield return new WaitTime(100);
                 continue;
             }
-            
+
             // var ingameUi = AreWeThereYet.Instance.GameController.IngameState.IngameUi;
-            
+
             // if (new List<Element> { ingameUi.TreePanel, ingameUi.AtlasTreePanel, ingameUi.OpenLeftPanel, ingameUi.OpenRightPanel, ingameUi.InventoryPanel, ingameUi.SettingsPanel, ingameUi.ChatPanel.Children.FirstOrDefault() }.Any(panel => panel != null && panel.IsVisible))
             // {
             //     Keyboard.KeyPress(Keys.Escape);
@@ -418,323 +418,7 @@ public class AutoPilot
             var leaderPartyElement = GetLeaderPartyElement();
 
             // =================================================================
-            // SECTION 2: TASK GENERATION LOGIC
-            // =================================================================
-
-            // Case 1: The leader entity is NOT currently visible.
-            if (followTarget == null && leaderPartyElement != null && !_isTransitioning)
-            {
-                // --- SAFETY CHECK ---
-                // If we saw the leader less than 1 second ago, it's likely a temporary sync issue (like stairs).
-                if ((DateTime.Now - _leaderLastSeen).TotalMilliseconds < 1000)
-                {
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage("[SyncWait] Leader entity lost. Waiting 1s for potential same-zone transition sync.");
-                    }
-                    yield return new WaitTime(100);
-                    continue; // Restart the loop to re-check for the leader.
-                }
-
-                // If more than 1 second has passed, we are confident the leader has truly changed zones.
-                // Now, execute your full 3-layer fallback system.
-                
-                if (tasks.Any(t => t.Type == TaskNodeType.Transition))
-                {
-                    yield return new WaitTime(100);
-                    continue;
-                }
-
-                // --- LAYER 1: Try the precise portal memory first. This is the best-case scenario. ---
-                if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
-                {
-                    var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
-
-                    // Only consume memory and continue IF we successfully find the label and create a task.
-                    if (portalLabel != null)
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[Layer 1: Memory] SUCCESS: Found portal on screen. Using fresh memory: {_lastKnownLeaderPortal.Metadata}");
-                        }
-                        tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
-
-                        // Consume memory and exit logic for this frame.
-                        _lastKnownLeaderPortal = null;
-                        _portalMemoryExpiresAt = DateTime.MinValue;
-                        continue;
-                    }
-                    else
-                    {
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage("[Layer 1: Memory] INFO: Have memory, but portal is not on screen. Will try again.");
-                        }
-                    }
-                }
-
-                // --- If Layer 1 failed or had no memory, proceed to subsequent layers ---
-                if (IsLeaderZoneInfoReliable(leaderPartyElement))
-                {
-                    var targetZoneName = leaderPartyElement.ZoneName;
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage($"[System] Party UI is reliable. Target zone: '{targetZoneName}'");
-                    }
-
-                    // --- LAYER 2: Unified Smart Scan ---
-                    var allPortals = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
-                        .Concat(AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.TownPortal]);
-
-                    var smartFoundPortal = allPortals.FirstOrDefault(e =>
-                    {
-                        var destinationName = GetPortalDestinationName(e);
-                        return !string.IsNullOrEmpty(destinationName) &&
-                                string.Equals(destinationName, targetZoneName, StringComparison.OrdinalIgnoreCase);
-                    });
-
-                    if (smartFoundPortal != null)
-                    {
-                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                            .FirstOrDefault(x => x.ItemOnGround.Id == smartFoundPortal.Id);
-
-                        // Apply the same critical fix here.
-                        if (portalLabel != null)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[Layer 2: UnifiedScan] SUCCESS: Found entity on screen: {smartFoundPortal.Metadata}");
-                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
-                            continue; // Task created, we are done.
-                        }
-                    }
-
-                    // --- LAYER 3: Legacy Label Scan (Final Fallback) ---
-                    var portalByLabel = GetBestPortalLabel(leaderPartyElement);
-                    if (portalByLabel != null)
-                    {
-                        // Apply the same critical fix here.
-                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"[Layer 3: LabelScan] SUCCESS: Found portal with matching label text: '{portalByLabel.Label.Text}'.");
-                        }
-                        tasks.Add(new TaskNode(portalByLabel, 200, TaskNodeType.Transition));
-                        continue; // Task created, we are done.
-                    }
-
-                    // --- LAYER 4: Final Fallback (Teleport Button) ---
-                    // This layer doesn't create a task in the same way, so it doesn't need the same check.
-                    // It directly performs actions.
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage("[All Scans FAILED]. Falling back to Layer 4 (UI Teleport).");
-                    }
-                    var tpConfirmation = GetTpConfirmation();
-                    if (tpConfirmation != null)
-                    {
-                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
-                        yield return new WaitTime(1000);
-                    }
-
-                    var tpButton = GetTpButton(leaderPartyElement);
-                    if (!tpButton.Equals(Vector2.Zero))
-                    {
-                        yield return Mouse.SetCursorPosHuman(tpButton, false);
-                        yield return new WaitTime(200);
-                        yield return Mouse.LeftClick();
-                        yield return new WaitTime(200);
-                    }
-                }
-                else
-                {
-
-                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                    {
-                        AreWeThereYet.Instance.LogMessage("[System] Waiting for reliable zone info from party UI...");
-                    }
-                    yield return new WaitTime(200);
-                }
-            }
-
-            // Case 2: The leader is currently visible and in the same zone.
-            else if (followTarget != null)
-            {
-                // --- PRIORITY 1: DETECT A SAME-ZONE TELEPORT ---
-                // Update the timestamp since we can see the leader.
-                _leaderLastSeen = DateTime.Now;
-
-                // Calculate how far the leader moved since the last frame.
-                float distanceMoved = Vector3.Distance(followTarget.Pos, lastTargetPosition);
-
-                // --- FORK IN THE ROAD: Did the leader just teleport? ---
-
-                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
-                {
-                    AreWeThereYet.Instance.LogMessage($"DEBUG1: [SameZoneJump] Leader moved {distanceMoved:F0} units.");
-
-                    // Scan for a LOCAL transition near the leader's LAST known position.
-                    var localTransition = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
-                        .Where(entity =>
-                        {
-                            var transition = entity.GetComponent<AreaTransition>();
-                            // This uses YOUR correct syntax for the enum comparison.
-                            return transition != null &&
-                                transition.TransitionType == AreaTransitionType.Local && 
-                                Vector3.Distance(lastTargetPosition, entity.Pos) < NEAR_PORTAL_RADIUS;
-                        })
-                        .OrderBy(entity => Vector3.Distance(lastTargetPosition, entity.Pos))
-                        .FirstOrDefault();                        
-
-                    if (localTransition != null)
-                    {
-                        AreWeThereYet.Instance.LogMessage($"DEBUG2: [Deduction] Found LOCAL transition: {localTransition.Metadata}. Creating task.");
-                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
-                                            .FirstOrDefault(x => x.ItemOnGround.Id == localTransition.Id);
-
-                        if (portalLabel != null)
-                        {
-                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                AreWeThereYet.Instance.LogMessage($"[SameZoneJump] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
-                            }
-                            tasks.Clear();
-                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
-                        }
-                    }
-                    else
-                    {
-                        AreWeThereYet.Instance.LogMessage("WARNING: Detected a same-zone jump but found no LOCAL transition nearby.");
-                    }
-
-                    // IMPORTANT: Update position and consume memory regardless, to prevent loops.
-                    lastTargetPosition = followTarget.Pos;
-                    _lastKnownLeaderPortal = null;
-                    _portalMemoryExpiresAt = DateTime.MinValue;
-                    continue; // Commit to the transition and restart the main loop.
-                }
-                // ELSE (if no teleport happened)...
-                else
-                {
-                    // ...then proceed with all NORMAL operations for this frame.
-
-                    // --- PRIORITY 2: RECORD THE LEADER'S CURRENT POSITION FOR THE *NEXT* FRAME ---
-                    var leaderActor = followTarget.GetComponent<Actor>();
-                    if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
-                    {
-                        _lastKnownLeaderPortal = target;
-                        AreWeThereYet.Instance.LogMessage($"DEBUG3: Last known Leader Portal: {_lastKnownLeaderPortal}");
-                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);
-                    }
-                    else
-                    {
-                        // If the leader isn't actively targeting a portal, check if they are standing near one.
-                        var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
-                        if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < NEAR_PORTAL_RADIUS)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"DEBUG4: Portal near Leader at {_lastKnownLeaderPortal}");
-                            _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
-                            _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);                // refresh
-                        }
-                        else
-                        {
-                            // keep the memory alive for PORTAL_MEMORY_LIFESPAN_MS
-                            if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
-                            {
-                                // still fresh – do nothing, just log
-                                AreWeThereYet.Instance.LogMessage($"DEBUG5: Memory still fresh ({(_portalMemoryExpiresAt - DateTime.Now).TotalMilliseconds:F0} ms)");
-                            }
-                            else
-                            {
-                                _lastKnownLeaderPortal = null;                     // really forget
-                                _portalMemoryExpiresAt = DateTime.MinValue;
-                                AreWeThereYet.Instance.LogMessage("DEBUG6: Portal memory EXPIRED and was nulled");
-                            }
-                        }
-                    }
-
-                    // --- PRIORITY 3: Generate path for normal following. ---
-                    // This logic will only run if no teleport was detected.
-                    var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
-                    if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
-                    {
-                        if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
-                        {
-                            var transition = GetBestPortalLabel(leaderPartyElement);
-                            if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
-                                tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
-                        }
-                        else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
-                        {
-                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                        }
-
-                        else if (tasks.Count > 0)
-                        {
-                            var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
-                            if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance)
-                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                        }
-                    }
-                    else
-                    {
-                        if (tasks.Count > 0)
-                        {
-                            for (var i = tasks.Count - 1; i >= 0; i--)
-                                if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
-                                    tasks.RemoveAt(i);
-                            yield return null;
-                        }
-                        if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
-                        {
-                            if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
-                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
-                        }
-
-                        // --- Quest Item and other interaction logic ---
-                        var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
-                        if (!isHideout)
-                        {
-                            var questLoot = GetQuestItem();
-                            if (questLoot != null &&
-                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
-                            {
-                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                                {
-                                    var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                                    AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
-                                }
-                                tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
-                            }
-                            else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                            {
-                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
-                                var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
-                                AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
-                            }
-
-                            var mercenaryOptIn = GetMercenaryOptInButton();
-                            if (mercenaryOptIn != null &&
-                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
-                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
-                            {
-                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
-                                {
-                                    AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
-                                }
-                                tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
-                            }
-                        }
-
-                    }
-                    if (followTarget?.Pos != null)
-                        lastTargetPosition = followTarget.Pos;
-                }
-            }
-
-            // =================================================================
-            // SECTION 3: TASK EXECUTION STATE MACHINE
+            // SECTION 2: TASK EXECUTION STATE MACHINE
             // =================================================================
             // This section executes whatever task is at the front of the queue.
 
@@ -897,7 +581,330 @@ public class AutoPilot
                             break;
                         }
                 }
+                continue;
             }
+            
+            // =================================================================
+            // SECTION 3: TASK GENERATION LOGIC
+            // =================================================================
+
+            // Case 1: The leader entity is NOT currently visible.
+            if (followTarget == null && leaderPartyElement != null && !_isTransitioning)
+            {
+                // --- SAFETY CHECK ---
+                // If we saw the leader less than 1 second ago, it's likely a temporary sync issue (like stairs).
+                if ((DateTime.Now - _leaderLastSeen).TotalMilliseconds < 1000)
+                {
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("[SyncWait] Leader entity lost. Waiting 1s for potential same-zone transition sync.");
+                    }
+                    yield return new WaitTime(100);
+                    continue; // Restart the loop to re-check for the leader.
+                }
+
+                // If more than 1 second has passed, we are confident the leader has truly changed zones.
+                // Now, execute your full 3-layer fallback system.
+
+                if (tasks.Any(t => t.Type == TaskNodeType.Transition))
+                {
+                    yield return new WaitTime(100);
+                    continue;
+                }
+
+                // --- LAYER 1: Try the precise portal memory first. This is the best-case scenario. ---
+                if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
+                {
+                    var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                        .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
+
+                    // Only consume memory and continue IF we successfully find the label and create a task.
+                    if (portalLabel != null)
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[Layer 1: Memory] SUCCESS: Found portal on screen. Using fresh memory: {_lastKnownLeaderPortal.Metadata}");
+                        }
+                        tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
+
+                        // Consume memory and exit logic for this frame.
+                        _lastKnownLeaderPortal = null;
+                        _portalMemoryExpiresAt = DateTime.MinValue;
+                        continue;
+                    }
+                    else
+                    {
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage("[Layer 1: Memory] INFO: Have memory, but portal is not on screen. Will try again.");
+                        }
+                    }
+                }
+
+                // --- If Layer 1 failed or had no memory, proceed to subsequent layers ---
+                if (IsLeaderZoneInfoReliable(leaderPartyElement))
+                {
+                    var targetZoneName = leaderPartyElement.ZoneName;
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"[System] Party UI is reliable. Target zone: '{targetZoneName}'");
+                    }
+
+                    // --- LAYER 2: Unified Smart Scan ---
+                    var allPortals = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
+                        .Concat(AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.TownPortal]);
+
+                    var smartFoundPortal = allPortals.FirstOrDefault(e =>
+                    {
+                        var destinationName = GetPortalDestinationName(e);
+                        return !string.IsNullOrEmpty(destinationName) &&
+                                string.Equals(destinationName, targetZoneName, StringComparison.OrdinalIgnoreCase);
+                    });
+
+                    if (smartFoundPortal != null)
+                    {
+                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                            .FirstOrDefault(x => x.ItemOnGround.Id == smartFoundPortal.Id);
+
+                        // Apply the same critical fix here.
+                        if (portalLabel != null)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[Layer 2: UnifiedScan] SUCCESS: Found entity on screen: {smartFoundPortal.Metadata}");
+                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
+                            continue; // Task created, we are done.
+                        }
+                    }
+
+                    // --- LAYER 3: Legacy Label Scan (Final Fallback) ---
+                    var portalByLabel = GetBestPortalLabel(leaderPartyElement);
+                    if (portalByLabel != null)
+                    {
+                        // Apply the same critical fix here.
+                        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"[Layer 3: LabelScan] SUCCESS: Found portal with matching label text: '{portalByLabel.Label.Text}'.");
+                        }
+                        tasks.Add(new TaskNode(portalByLabel, 200, TaskNodeType.Transition));
+                        continue; // Task created, we are done.
+                    }
+
+                    // --- LAYER 4: Final Fallback (Teleport Button) ---
+                    // This layer doesn't create a task in the same way, so it doesn't need the same check.
+                    // It directly performs actions.
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("[All Scans FAILED]. Falling back to Layer 4 (UI Teleport).");
+                    }
+                    var tpConfirmation = GetTpConfirmation();
+                    if (tpConfirmation != null)
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
+                        yield return new WaitTime(1000);
+                    }
+
+                    var tpButton = GetTpButton(leaderPartyElement);
+                    if (!tpButton.Equals(Vector2.Zero))
+                    {
+                        yield return Mouse.SetCursorPosHuman(tpButton, false);
+                        yield return new WaitTime(200);
+                        yield return Mouse.LeftClick();
+                        yield return new WaitTime(200);
+                    }
+                }
+                else
+                {
+
+                    if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    {
+                        AreWeThereYet.Instance.LogMessage("[System] Waiting for reliable zone info from party UI...");
+                    }
+                    yield return new WaitTime(200);
+                }
+            }
+
+            // Case 2: The leader is currently visible and in the same zone.
+            else if (followTarget != null)
+            {
+                // --- PRIORITY 1: DETECT A SAME-ZONE TELEPORT ---
+                // Update the timestamp since we can see the leader.
+                _leaderLastSeen = DateTime.Now;
+
+                // Calculate how far the leader moved since the last frame.
+                float distanceMoved = Vector3.Distance(followTarget.Pos, lastTargetPosition);
+
+                // --- FORK IN THE ROAD: Did the leader just teleport? ---
+
+                if (distanceMoved > TELEPORT_DISTANCE_THRESHOLD)
+                {
+                    AreWeThereYet.Instance.LogMessage($"DEBUG1: [SameZoneJump] Leader moved {distanceMoved:F0} units.");
+
+                    // Scan for a LOCAL transition near the leader's LAST known position.
+                    var localTransition = AreWeThereYet.Instance.GameController.EntityListWrapper.ValidEntitiesByType[EntityType.AreaTransition]
+                        .Where(entity =>
+                        {
+                            var transition = entity.GetComponent<AreaTransition>();
+                            // This uses YOUR correct syntax for the enum comparison.
+                            return transition != null &&
+                                transition.TransitionType == AreaTransitionType.Local &&
+                                Vector3.Distance(lastTargetPosition, entity.Pos) < NEAR_PORTAL_RADIUS;
+                        })
+                        .OrderBy(entity => Vector3.Distance(lastTargetPosition, entity.Pos))
+                        .FirstOrDefault();
+
+                    if (localTransition != null)
+                    {
+                        AreWeThereYet.Instance.LogMessage($"DEBUG2: [Deduction] Found LOCAL transition: {localTransition.Metadata}. Creating task.");
+                        var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
+                                            .FirstOrDefault(x => x.ItemOnGround.Id == localTransition.Id);
+
+                        if (portalLabel != null)
+                        {
+                            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                AreWeThereYet.Instance.LogMessage($"[SameZoneJump] Leader teleported {distanceMoved:F0} units. Using portal memory: {_lastKnownLeaderPortal.Metadata}");
+                            }
+                            tasks.Clear();
+                            tasks.Insert(0, new TaskNode(portalLabel, 200, TaskNodeType.Transition));
+                        }
+                    }
+                    else
+                    {
+                        AreWeThereYet.Instance.LogMessage("WARNING: Detected a same-zone jump but found no LOCAL transition nearby.");
+                    }
+
+                    // IMPORTANT: Update position and consume memory regardless, to prevent loops.
+                    lastTargetPosition = followTarget.Pos;
+                    _lastKnownLeaderPortal = null;
+                    _portalMemoryExpiresAt = DateTime.MinValue;
+                    continue; // Commit to the transition and restart the main loop.
+                }
+                // ELSE (if no teleport happened)...
+                else
+                {
+                    // ...then proceed with all NORMAL operations for this frame.
+
+                    // --- PRIORITY 2: RECORD THE LEADER'S CURRENT POSITION FOR THE *NEXT* FRAME ---
+                    var leaderActor = followTarget.GetComponent<Actor>();
+                    if (leaderActor?.CurrentAction?.Target is { } target && (target.Type is EntityType.AreaTransition or EntityType.Portal or EntityType.TownPortal))
+                    {
+                        _lastKnownLeaderPortal = target;
+                        AreWeThereYet.Instance.LogMessage($"DEBUG3: Last known Leader Portal: {_lastKnownLeaderPortal}");
+                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);
+                    }
+                    else
+                    {
+                        // If the leader isn't actively targeting a portal, check if they are standing near one.
+                        var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
+                        if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < NEAR_PORTAL_RADIUS)
+                        {
+                            AreWeThereYet.Instance.LogMessage($"DEBUG4: Portal near Leader at {_lastKnownLeaderPortal}");
+                            _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
+                            _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);                // refresh
+                        }
+                        else
+                        {
+                            // keep the memory alive for PORTAL_MEMORY_LIFESPAN_MS
+                            if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
+                            {
+                                // still fresh – do nothing, just log
+                                AreWeThereYet.Instance.LogMessage($"DEBUG5: Memory still fresh ({(_portalMemoryExpiresAt - DateTime.Now).TotalMilliseconds:F0} ms)");
+                            }
+                            else
+                            {
+                                _lastKnownLeaderPortal = null;                     // really forget
+                                _portalMemoryExpiresAt = DateTime.MinValue;
+                                AreWeThereYet.Instance.LogMessage("DEBUG6: Portal memory EXPIRED and was nulled");
+                            }
+                        }
+                    }
+
+                    // --- PRIORITY 3: Generate path for normal following. ---
+                    // This logic will only run if no teleport was detected.
+                    var distanceToLeader = Vector3.Distance(AreWeThereYet.Instance.playerPosition, followTarget.Pos);
+                    if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                    {
+                        if (lastTargetPosition != Vector3.Zero && distanceMoved > AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
+                        {
+                            var transition = GetBestPortalLabel(leaderPartyElement);
+                            if (transition != null && transition.ItemOnGround.DistancePlayer < 80)
+                                tasks.Add(new TaskNode(transition, 200, TaskNodeType.Transition));
+                        }
+                        else if (tasks.Count == 0 && distanceMoved < 2000 && distanceToLeader > 200 && distanceToLeader < 2000)
+                        {
+                            tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+
+                        else if (tasks.Count > 0)
+                        {
+                            var distanceFromLastTask = Vector3.Distance(tasks.Last().WorldPosition, followTarget.Pos);
+                            if (distanceFromLastTask >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance)
+                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+                    }
+                    else
+                    {
+                        if (tasks.Count > 0)
+                        {
+                            for (var i = tasks.Count - 1; i >= 0; i--)
+                                if (tasks[i].Type == TaskNodeType.Movement || tasks[i].Type == TaskNodeType.Transition)
+                                    tasks.RemoveAt(i);
+                            yield return null;
+                        }
+                        if (AreWeThereYet.Instance.Settings.AutoPilot.CloseFollow.Value)
+                        {
+                            if (distanceToLeader >= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value)
+                                tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
+                        }
+
+                        // --- Quest Item and other interaction logic ---
+                        var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
+                        if (!isHideout)
+                        {
+                            var questLoot = GetQuestItem();
+                            if (questLoot != null &&
+                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) == null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                    AreWeThereYet.Instance.LogMessage($"Adding quest loot task - Distance: {distance:F1}, Item: {questLoot.Metadata}");
+                                }
+                                tasks.Add(new TaskNode(questLoot.Pos, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.Loot));
+                            }
+                            else if (questLoot != null && AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                            {
+                                var distance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, questLoot.Pos);
+                                var hasLootTask = tasks.FirstOrDefault(I => I.Type == TaskNodeType.Loot) != null;
+                                AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
+                            }
+
+                            var mercenaryOptIn = GetMercenaryOptInButton();
+                            if (mercenaryOptIn != null &&
+                                Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
+                                tasks.FirstOrDefault(I => I.Type == TaskNodeType.MercenaryOptIn) == null)
+                            {
+                                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                                {
+                                    AreWeThereYet.Instance.LogMessage($"Found mercenary OPT-IN button - adding to tasks");
+                                }
+                                tasks.Add(new TaskNode(mercenaryOptIn, AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance, TaskNodeType.MercenaryOptIn));
+                            }
+                        }
+
+                    }
+                    if (followTarget?.Pos != null)
+                        lastTargetPosition = followTarget.Pos;
+                }
+            }
+
+            // =================================================================
+            // SECTION 4: MANDATORY END-OF-LOOP HOUSEKEEPING
+            // =================================================================
+            // This block is OUTSIDE all other logic and will run on EVERY
+            // single iteration of the while loop, guaranteeing correctness.
             lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
             yield return new WaitTime(50);
         }
