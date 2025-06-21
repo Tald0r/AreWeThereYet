@@ -29,15 +29,12 @@ public class AutoPilot
     private LineOfSight LineOfSight => AreWeThereYet.Instance.lineOfSight;
 
     private Entity _lastKnownLeaderPortal = null;
-    private string _lastKnownLeaderZone = "";
     private DateTime _leaderLastSeen  = DateTime.MinValue;
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
     private bool _isTransitioning = false;
     
-    private const float TELEPORT_DISTANCE_THRESHOLD = 250f;
+    private const float TELEPORT_DISTANCE_THRESHOLD = 500f;
     private const float NEAR_PORTAL_RADIUS = 250f;
-    private const int PORTAL_MEMORY_LIFESPAN_MS = 1000; // How long to remember a portal in milliseconds.
-    private DateTime _portalMemoryExpiresAt = DateTime.MinValue; // The time when the memory becomes invalid.
 
 
     private void ResetPathing()
@@ -613,7 +610,7 @@ public class AutoPilot
                 }
 
                 // --- LAYER 1: Try the precise portal memory first. This is the best-case scenario. ---
-                if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
+                if (_lastKnownLeaderPortal != null)
                 {
                     var portalLabel = AreWeThereYet.Instance.GameController.IngameState.IngameUi.ItemsOnGroundLabels
                                         .FirstOrDefault(x => x.ItemOnGround.Id == _lastKnownLeaderPortal.Id);
@@ -629,7 +626,6 @@ public class AutoPilot
 
                         // Consume memory and exit logic for this frame.
                         _lastKnownLeaderPortal = null;
-                        _portalMemoryExpiresAt = DateTime.MinValue;
                         continue;
                     }
                     else
@@ -774,10 +770,9 @@ public class AutoPilot
                         AreWeThereYet.Instance.LogMessage("WARNING: Detected a same-zone jump but found no LOCAL transition nearby.");
                     }
 
-                    // IMPORTANT: Update position and consume memory regardless, to prevent loops.
+                    // IMPORTANT: Update position, to prevent loops.
                     lastTargetPosition = followTarget.Pos;
                     _lastKnownLeaderPortal = null;
-                    _portalMemoryExpiresAt = DateTime.MinValue;
                     continue; // Commit to the transition and restart the main loop.
                 }
                 // ELSE (if no teleport happened)...
@@ -791,33 +786,6 @@ public class AutoPilot
                     {
                         _lastKnownLeaderPortal = target;
                         AreWeThereYet.Instance.LogMessage($"DEBUG3: Last known Leader Portal: {_lastKnownLeaderPortal}");
-                        _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);
-                    }
-                    else
-                    {
-                        // If the leader isn't actively targeting a portal, check if they are standing near one.
-                        var closestPortalLabel = GetBestPortalLabel(new PartyElementWindow { ZoneName = "" }); // ZoneName is not used for this check.
-                        if (closestPortalLabel != null && Vector3.Distance(followTarget.Pos, closestPortalLabel.ItemOnGround.Pos) < NEAR_PORTAL_RADIUS)
-                        {
-                            AreWeThereYet.Instance.LogMessage($"DEBUG4: Portal near Leader at {_lastKnownLeaderPortal}");
-                            _lastKnownLeaderPortal = closestPortalLabel.ItemOnGround;
-                            _portalMemoryExpiresAt = DateTime.Now.AddMilliseconds(PORTAL_MEMORY_LIFESPAN_MS);                // refresh
-                        }
-                        else
-                        {
-                            // keep the memory alive for PORTAL_MEMORY_LIFESPAN_MS
-                            if (_lastKnownLeaderPortal != null && DateTime.Now < _portalMemoryExpiresAt)
-                            {
-                                // still fresh – do nothing, just log
-                                AreWeThereYet.Instance.LogMessage($"DEBUG5: Memory still fresh ({(_portalMemoryExpiresAt - DateTime.Now).TotalMilliseconds:F0} ms)");
-                            }
-                            else
-                            {
-                                _lastKnownLeaderPortal = null;                     // really forget
-                                _portalMemoryExpiresAt = DateTime.MinValue;
-                                AreWeThereYet.Instance.LogMessage("DEBUG6: Portal memory EXPIRED and was nulled");
-                            }
-                        }
                     }
 
                     // --- PRIORITY 3: Generate path for normal following. ---
