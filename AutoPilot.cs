@@ -45,8 +45,13 @@ public class AutoPilot
             
     }
 
+
     public void StartCoroutine()
     {
+        if(autoPilotCoroutine!= null && autoPilotCoroutine.Running)
+        {
+            return;
+        }
         autoPilotCoroutine = new Coroutine(AutoPilotLogic(), AreWeThereYet.Instance, "AutoPilot");
         Core.ParallelRunner.Run(autoPilotCoroutine);
     }
@@ -635,7 +640,7 @@ public class AutoPilot
             var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
             
             // Dash when there's NO line of sight (obstacles in the way)
-            return !hasLineOfSight && distance >= 50;
+            return hasLineOfSight && distance >= 50;
         }
         catch (Exception ex)
         {

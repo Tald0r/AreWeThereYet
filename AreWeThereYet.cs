@@ -72,6 +72,11 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         {
             if (!Settings.Enable) return;
 
+            if (Settings.RestartKey.PressedOnce())
+            {
+                autoPilot.StartCoroutine();
+            }
+
             try
             {
                 if (Settings.AutoPilot.Enabled && Settings.AutoPilot.RemoveGracePeriod && buffs != null && buffs.Exists(x => x.Name == "grace_period"))

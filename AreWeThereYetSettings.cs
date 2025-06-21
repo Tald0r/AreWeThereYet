@@ -17,6 +17,7 @@ public static class ColorExtensions
 public class AreWeThereYetSettings : ISettings
 {
     public ToggleNode Enable { get; set; } = new(false);
+    public HotkeyNode RestartKey { get; set; } = new(Keys.F7);
     public AutoPilotSettings AutoPilot { get; set; } = new();
     public DebugSettings Debug { get; set; } = new();
 }
