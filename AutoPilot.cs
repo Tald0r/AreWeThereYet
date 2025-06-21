@@ -11,6 +11,7 @@ using ExileCore.Shared;
 using ExileCore.Shared.Enums;
 using SharpDX;
 using AreWeThereYet.Utils;
+using System.Windows.Forms;
 
 namespace AreWeThereYet;
 
@@ -29,6 +30,8 @@ public class AutoPilot
 
     private string _lastKnownLeaderZone = "";
     private DateTime _leaderZoneChangeTime = DateTime.MinValue;
+    
+    private bool _isTransitioning = false;
 
     private void ResetPathing()
     {
@@ -41,6 +44,18 @@ public class AutoPilot
 
     public void AreaChange()
     {
+        // If we triggered this area change ourselves...
+        if (_isTransitioning)
+        {
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage($"We are transitioning, starting pause coroutine.");
+            }
+
+            // ...start a new coroutine to handle the post-transition grace period.
+            var gracePeriodCoroutine = new Coroutine(PostTransitionGracePeriod(), AreWeThereYet.Instance, "PostTransitionGracePeriod");
+            Core.ParallelRunner.Run(gracePeriodCoroutine);
+        }
         ResetPathing();
             
     }
@@ -228,8 +243,7 @@ public class AutoPilot
             return Vector2.Zero;
         }
     }
-
-
+    
     private Vector2 GetTpButton(PartyElementWindow leaderPartyElement)
     {
         try
@@ -277,22 +291,111 @@ public class AutoPilot
 	        
         yield return new WaitTime(30 + random.Next(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency));
     }
+    
+        private IEnumerator PostTransitionGracePeriod()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        const int TIMEOUT_MS = 10000; // 10-second timeout.
 
+        if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+        {
+            AreWeThereYet.Instance.LogMessage("[GracePeriod] Entered post-transition grace period. Waiting for leader entity to sync...");
+        }
+
+        while (stopwatch.ElapsedMilliseconds < TIMEOUT_MS)
+        {
+            var leaderPartyElement = GetLeaderPartyElement();
+            var followTarget = GetFollowingTarget();
+            var currentAreaName = AreWeThereYet.Instance.GameController.Area.CurrentArea.DisplayName;
+
+            // Success Condition: The leader's entity is found and they are in the same zone as us.
+            if (leaderPartyElement != null && followTarget != null && leaderPartyElement.ZoneName.Equals(currentAreaName))
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                {
+                    AreWeThereYet.Instance.LogMessage($"[GracePeriod] SUCCESS: Leader entity found and synced in '{currentAreaName}'. Resuming normal logic.");
+                }
+                stopwatch.Stop();
+                _isTransitioning = false; // Unlock the main logic.
+                yield break;              // Exit the coroutine.
+            }
+
+            yield return new WaitTime(100);
+        }
+
+        // If we reach here, the loop timed out. Now we must determine why.
+        var finalLeaderPartyElement = GetLeaderPartyElement();
+        var finalCurrentAreaName = AreWeThereYet.Instance.GameController.Area.CurrentArea.DisplayName;
+
+        // --- THE NEW FAILSAFE LOGIC ---
+        // Check for the "Same Zone, Different Instance" problem.
+        if (finalLeaderPartyElement != null && finalLeaderPartyElement.ZoneName.Equals(finalCurrentAreaName))
+        {
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage($"[GracePeriod] DEADLOCK DETECTED: In same zone ('{finalCurrentAreaName}') but different instance. Forcing UI teleport to sync instances.", 10, Color.Red);
+            }
+
+            // Check for and click the "Are you sure?" confirmation box if it's open.
+            var tpConfirmation = GetTpConfirmation();
+            if (tpConfirmation != null)
+            {
+                yield return Mouse.SetCursorPosHuman(tpConfirmation.GetClientRect().Center);
+                yield return new WaitTime(200);
+                yield return Mouse.LeftClick();
+                yield return new WaitTime(1000);
+            }
+
+            // Click the teleport button on the party UI to force an instance sync.
+            var tpButton = GetTpButton(finalLeaderPartyElement);
+            if (!tpButton.Equals(Vector2.Zero))
+            {
+                yield return Mouse.SetCursorPosHuman(tpButton, false);
+                yield return new WaitTime(200);
+                yield return Mouse.LeftClick();
+                yield return new WaitTime(200);
+            }
+        }
+        else
+        {
+            // The timeout was for a different reason (e.g., leader zoned again). Let the main logic handle it.
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage("[GracePeriod] TIMEOUT: Leader entity did not sync. Resuming logic with fallback.", 5, Color.Orange);
+            }
+        }
+
+        _isTransitioning = false; // Unlock the main logic in all timeout cases.
+    }
+    
     private IEnumerator AutoPilotLogic()
     {
         while (true)
         {
-            if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive || 
+            // =================================================================
+            // SECTION 1: INITIAL CHECKS & UI CLEANUP
+            // =================================================================
+            if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive ||
                 !AreWeThereYet.Instance.GameController.IsForeGroundCache || MenuWindow.IsOpened || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             {
                 yield return new WaitTime(100);
                 continue;
             }
-		        
+            
+            // TODO: custom settings if user want automatically close all ui shits.
+            // var ingameUi = AreWeThereYet.Instance.GameController.IngameState.IngameUi;
+
+            // if (new List<Element> { ingameUi.TreePanel, ingameUi.AtlasTreePanel, ingameUi.OpenLeftPanel, ingameUi.OpenRightPanel, ingameUi.InventoryPanel, ingameUi.SettingsPanel, ingameUi.ChatPanel.Children.FirstOrDefault() }.Any(panel => panel != null && panel.IsVisible))
+            // {
+            //     Keyboard.KeyPress(Keys.Escape);
+            //     yield return new WaitTime(150);
+            //     continue;
+            // }
+
             followTarget = GetFollowingTarget();
             var leaderPartyElement = GetLeaderPartyElement();
 
-            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName))
+            if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName) && !_isTransitioning)
             {
                 // Track zone changes for buffer timing
                 if (!_lastKnownLeaderZone.Equals(leaderPartyElement.ZoneName))
@@ -300,7 +403,7 @@ public class AutoPilot
                     // Leader zone changed - start buffer timer
                     _lastKnownLeaderZone = leaderPartyElement.ZoneName;
                     _leaderZoneChangeTime = DateTime.Now;
-                    
+
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
                         AreWeThereYet.Instance.LogMessage($"Leader zone change detected: '{_lastKnownLeaderZone}' - starting reliability check");
@@ -355,13 +458,13 @@ public class AutoPilot
                     // Leader zone info not reliable yet, wait for it to stabilize
                     var timeSinceChange = DateTime.Now - _leaderZoneChangeTime;
                     var bufferTime = TimeSpan.FromMilliseconds(AreWeThereYet.Instance.Settings.AutoPilot.ZoneUpdateBuffer?.Value ?? 2000);
-                    
+
                     if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     {
                         var remaining = bufferTime - timeSinceChange;
                         AreWeThereYet.Instance.LogMessage($"Zone info not reliable yet - waiting {remaining.TotalMilliseconds:F0}ms more (Current: '{leaderPartyElement.ZoneName}')");
                     }
-                    
+
                     yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
                 }
             }
@@ -408,7 +511,7 @@ public class AutoPilot
                     }
 
                     var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
-                    if(!isHideout)
+                    if (!isHideout)
                     {
                         var questLoot = GetQuestItem();
                         if (questLoot != null &&
@@ -454,7 +557,7 @@ public class AutoPilot
                 var taskDistance = Vector3.Distance(AreWeThereYet.Instance.playerPosition, currentTask.WorldPosition);
                 var playerDistanceMoved = Vector3.Distance(AreWeThereYet.Instance.playerPosition, lastPlayerPosition);
 
-                if (currentTask.Type == TaskNodeType.Transition && 
+                if (currentTask.Type == TaskNodeType.Transition &&
                     playerDistanceMoved >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value)
                 {
                     tasks.RemoveAt(0);
@@ -477,9 +580,9 @@ public class AutoPilot
                         {
                             yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
                             yield return new WaitTime(random.Next(25) + 30);
-                            Input.KeyDown(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            Keyboard.KeyDown(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(random.Next(25) + 30);
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                         }
 
                         if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
@@ -501,7 +604,7 @@ public class AutoPilot
                                 yield return null;
                             }
 
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
                             if (questLoot != null)
                             {
@@ -537,8 +640,11 @@ public class AutoPilot
                                 yield return null;
                                 continue;
                             }
+                            
+                            // SET THE FLAG: We are about to change zones.
+                            _isTransitioning = true;
 
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(60);
                             yield return Mouse.SetCursorPosAndLeftClickHuman(new Vector2(currentTask.LabelOnGround.Label.GetClientRect().Center.X, currentTask.LabelOnGround.Label.GetClientRect().Center.Y), 100);
                             yield return new WaitTime(300);
@@ -576,7 +682,7 @@ public class AutoPilot
                             }
 
                             // Stop movement and click the button
-                            Input.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
                             yield return new WaitTime(AreWeThereYet.Instance.Settings.AutoPilot.InputFrequency);
 
                             var buttonPos = GetMercenaryOptInButtonPosition(mercenaryOptIn);
@@ -605,6 +711,12 @@ public class AutoPilot
                         }
                 }
             }
+
+            // =================================================================
+            // SECTION 4: MANDATORY END-OF-LOOP HOUSEKEEPING
+            // =================================================================
+            // This block is OUTSIDE all other logic and will run on EVERY
+            // single iteration of the while loop, guaranteeing correctness.
             lastPlayerPosition = AreWeThereYet.Instance.playerPosition;
             yield return new WaitTime(50);
         }
@@ -614,7 +726,7 @@ public class AutoPilot
     {
         try
         {
-            // Add comprehensive null checks like CoPilot
+            // Comprehensive null checks
             if (LineOfSight == null || 
                 AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
                 AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
@@ -832,5 +944,17 @@ public class AutoPilot
         AreWeThereYet.Instance.Graphics.DrawText("Coroutine: " + (autoPilotCoroutine.Running ? "Active" : "Dead"), new System.Numerics.Vector2(350, 140));
         AreWeThereYet.Instance.Graphics.DrawText("Leader: " + "[ " + AreWeThereYet.Instance.Settings.AutoPilot.LeaderName.Value + " ] " + (followTarget != null ? "Found" : "Null"), new System.Numerics.Vector2(500, 160));
         AreWeThereYet.Instance.Graphics.DrawLine(new System.Numerics.Vector2(490, 110), new System.Numerics.Vector2(490, 210), 1, Color.White);
+
+        // --- WATCHDOG & RESTART LOGIC ---
+        // Check if the coroutine is null (hasn't started yet) or if it has stopped running.
+        if (autoPilotCoroutine == null || !autoPilotCoroutine.Running)
+        {
+            // Log a message so you know a restart is happening.
+            AreWeThereYet.Instance.LogMessage("[AutoPilot] Coroutine is dead or not started. Restarting...");
+
+            // Call your existing method to start it.
+            StartCoroutine();
+        }
+        // --- END OF WATCHDOG LOGIC ---    
     }
 }

@@ -26,15 +26,15 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
     internal Entity localPlayer;
     internal Life player;
     internal Vector3 playerPosition;
-    private Coroutine skillCoroutine;
+    // private Coroutine skillCoroutine;
 
     public override bool Initialise()
     {
         if (Instance == null)
             Instance = this;
         GameController.LeftPanel.WantUse(() => Settings.Enable);
-        skillCoroutine = new Coroutine(WaitForAreaChange(), this);
-        Core.ParallelRunner.Run(skillCoroutine);
+        // skillCoroutine = new Coroutine(WaitForAreaChange(), this);
+        // Core.ParallelRunner.Run(skillCoroutine);
         Input.RegisterKey(Settings.AutoPilot.ToggleKey.Value);
         Settings.AutoPilot.ToggleKey.OnValueChanged += () => { Input.RegisterKey(Settings.AutoPilot.ToggleKey.Value); };
 
@@ -49,13 +49,13 @@ public class AreWeThereYet : BaseSettingsPlugin<AreWeThereYetSettings>
         return new Vector2(GameController.IngameState.MousePosX, GameController.IngameState.MousePosY);
     }
 
-    private IEnumerator WaitForAreaChange()
-    {
-        while (localPlayer == null || GameController.IsLoading || !GameController.InGame)
-            yield return new WaitTime(200);
+    // private IEnumerator WaitForAreaChange()
+    // {
+    //     while (localPlayer == null || GameController.IsLoading || !GameController.InGame)
+    //         yield return new WaitTime(200);
 
-        yield return new WaitTime(1000);
-    }
+    //     yield return new WaitTime(1000);
+    // }
 
     public override void AreaChange(AreaInstance area)
     {
