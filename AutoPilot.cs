@@ -623,9 +623,15 @@ public class AutoPilot
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
             var distance = Vector2.Distance(playerPos, targetPosition);
             
-            // Don't dash for very short or very long distances
-            if (distance < 30 || distance > 150)
+            var minDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMinDistance.Value;
+            var maxDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMaxDistance.Value;
+            
+            if (distance < minDistance || distance > maxDistance)
+            {
+                if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+                    AreWeThereYet.Instance.LogMessage($"ShouldUseDash: Distance {distance:F1} outside dash range ({minDistance}-{maxDistance})");
                 return false;
+            }            
             
             // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
             var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
@@ -633,9 +639,14 @@ public class AutoPilot
 
             // This is where exceptions were crashing your coroutine
             var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
+            var shouldDash = !hasLineOfSight && distance >= minDistance;
             
-            // Dash when there's NO line of sight (obstacles in the way)
-            return !hasLineOfSight && distance >= 50;
+            if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
+            {
+                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, hasLineOfSight: {hasLineOfSight})");
+            }
+            
+            return shouldDash;            
         }
         catch (Exception ex)
         {
