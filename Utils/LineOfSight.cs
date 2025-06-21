@@ -12,20 +12,28 @@ using Vector3 = System.Numerics.Vector3;
 
 namespace AreWeThereYet.Utils
 {
+    public enum PathStatus
+    {
+        Clear,              // The path is fully walkable.
+        Dashable,           // The path is blocked by a dashable obstacle (terrain value 2).
+        Blocked,            // The path is blocked by an impassable wall or terrain (terrain value 0 or other).
+        Invalid             // The start or end point is out of bounds.
+    }
+    
     public class LineOfSight
     {
         private readonly GameController _gameController;
         private int[][] _terrainData;
         private Vector2i _areaDimensions;
-        
+
         // Periodic refresh for dynamic door detection
         private DateTime _lastTerrainRefresh = DateTime.MinValue;
         private int TerrainRefreshInterval => AreWeThereYet.Instance.Settings.Debug.Terrain.RefreshInterval?.Value ?? 500;
-        
+
         // TraceMyRay-style settings integration
         //private bool UseWalkableTerrainInsteadOfTargetTerrain => AreWeThereYet.Instance.Settings.UseWalkableTerrainInsteadOfTargetTerrain?.Value ?? false;
         private int TerrainValueForCollision => AreWeThereYet.Instance.Settings.Debug.Raycast.TerrainValueForCollision?.Value ?? 2;
-        
+
         // Debug visualization (keeping your current approach but enhanced)
         private readonly List<(Vector2 Pos, int Value)> _debugPoints = new();
         private readonly List<(Vector2 Start, Vector2 End, bool IsVisible)> _debugRays = new();
@@ -79,7 +87,7 @@ namespace AreWeThereYet.Utils
         {
             _debugVisiblePoints.Clear();
             _cursorRays.Clear();
-            
+
             UpdateDebugGrid(playerPosition);
 
             // Cast ray to cursor position if enabled
@@ -107,12 +115,12 @@ namespace AreWeThereYet.Utils
         private void RefreshTerrainData()
         {
             var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
-            
+
             if (timeSinceRefresh >= TerrainRefreshInterval)
             {
                 UpdateTerrainData();
                 _lastTerrainRefresh = DateTime.Now;
-                
+
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                 {
                     AreWeThereYet.Instance.LogMessage($"LineOfSight: Refreshed terrain data at {DateTime.Now:HH:mm:ss.fff}");
@@ -216,9 +224,120 @@ namespace AreWeThereYet.Utils
                     return 0;  // Completely impassable (solid walls, closed doors)
                 }
             }
-            
+
             return 1;  // Default fallback
         }
+
+        public PathStatus GetPathStatus(Vector2 start, Vector2 end)
+        {
+            if (_terrainData == null) return PathStatus.Blocked; // Or Invalid, depending on desired behavior
+
+            // // Update debug visualization if needed
+            // _debugVisiblePoints.Clear();
+            // UpdateDebugGrid(start);
+
+            var status = GetPathStatusInternal(start, end);
+            // Can still add to debug rays if needed
+            // _debugRays.Add((start, end, status == PathStatus.Clear || status == PathStatus.BlockedByDashable));
+
+            return status;
+        }
+
+        private PathStatus GetPathStatusInternal(Vector2 start, Vector2 end)
+        {
+            var startX = (int)start.X;
+            var startY = (int)start.Y;
+            var endX = (int)end.X;
+            var endY = (int)end.Y;
+
+            if (!IsInBounds(startX, startY) || !IsInBounds(endX, endY))
+                return PathStatus.Invalid;
+
+            var dx = Math.Abs(endX - startX);
+            var dy = Math.Abs(endY - startY);
+
+            var x = startX;
+            var y = startY;
+            var stepX = startX < endX ? 1 : -1;
+            var stepY = startY < endY ? 1 : -1;
+
+            // This is the core logic change. Instead of calling IsTerrainPassable,
+            // we check the terrain value directly and return the appropriate status.
+            Func<Vector2, PathStatus> checkPoint = (pos) =>
+            {
+                var terrainValue = GetTerrainValue(pos);
+                switch (terrainValue)
+                {
+                    case 0: // Impassable walls/void
+                        return PathStatus.Blocked;
+                    case 2: // Static objects (doors, chests, etc.)
+                        return PathStatus.Dashable;
+                    default: // Assumes 1, 5, and others are walkable
+                        _debugVisiblePoints.Add(pos);
+                        return PathStatus.Clear;
+                }
+            };
+
+            if (dx == 0) // Vertical line
+            {
+                for (var i = 0; i < dy; i++)
+                {
+                    y += stepY;
+                    var status = checkPoint(new Vector2(x, y));
+                    if (status != PathStatus.Clear) return status;
+                }
+            }
+            else if (dy == 0) // Horizontal line
+            {
+                for (var i = 0; i < dx; i++)
+                {
+                    x += stepX;
+                    var status = checkPoint(new Vector2(x, y));
+                    if (status != PathStatus.Clear) return status;
+                }
+            }
+            else // DDA algorithm for diagonal lines
+            {
+                var deltaErr = Math.Abs((float)dy / dx);
+                var error = 0.0f;
+
+                if (dx >= dy) // Drive by X
+                {
+                    for (var i = 0; i < dx; i++)
+                    {
+                        x += stepX;
+                        error += deltaErr;
+                        if (error >= 0.5f)
+                        {
+                            y += stepY;
+                            error -= 1.0f;
+                        }
+                        var status = checkPoint(new Vector2(x, y));
+                        if (status != PathStatus.Clear) return status;
+                    }
+                }
+                else // Drive by Y
+                {
+                    deltaErr = Math.Abs((float)dx / dy);
+                    for (var i = 0; i < dy; i++)
+                    {
+                        y += stepY;
+                        error += deltaErr;
+                        if (error >= 0.5f)
+                        {
+                            x += stepX;
+                            error -= 1.0f;
+                        }
+                        var status = checkPoint(new Vector2(x, y));
+                        if (status != PathStatus.Clear) return status;
+                    }
+                }
+            }
+
+            // If the loop completes without returning, the path is clear.
+            return PathStatus.Clear;
+        }
+
 
         /// <summary>
         /// Main line-of-sight check with automatic terrain refresh
@@ -255,7 +374,7 @@ namespace AreWeThereYet.Utils
 
             var dx = Math.Abs(endX - startX);
             var dy = Math.Abs(endY - startY);
-            
+
             var x = startX;
             var y = startY;
             var stepX = startX < endX ? 1 : -1;
@@ -341,14 +460,14 @@ namespace AreWeThereYet.Utils
         private bool IsTerrainPassable(Vector2 pos)
         {
             var terrainValue = GetTerrainValue(pos);
-            
+
             switch (terrainValue)
             {
                 case 0:  // Impassable walls/void
                     return false;
 
                 case 2:  // Static objects (doors, chests, decorations) - dashable
-                        // Only passable if dash is enabled, otherwise block
+                         // Only passable if dash is enabled, otherwise block
                     return AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled?.Value == true;
 
                 case 1:  // Basic walkable terrain - ??? i guess
@@ -395,7 +514,7 @@ namespace AreWeThereYet.Utils
                 var z = AreWeThereYet.Instance.Settings.Debug.Raycast.DrawAtPlayerPlane?.Value == true
                     ? _lastObserverZ
                     : _gameController.IngameState.Data.GetTerrainHeightAt(pos);
-                    
+
                 var worldPos = new Vector3(pos.GridToWorld(), z);
                 var screenPos = _gameController.IngameState.Camera.WorldToScreen(worldPos);
 
@@ -479,7 +598,7 @@ namespace AreWeThereYet.Utils
                 var endScreen = _gameController.IngameState.Camera.WorldToScreen(endWorld);
 
                 // Choose color based on line-of-sight result
-                var lineColor = isVisible 
+                var lineColor = isVisible
                     ? new SharpDX.Color(0, 255, 0, 200)    // Green - Clear line of sight
                     : new SharpDX.Color(255, 0, 0, 200);   // Red - Blocked
 
@@ -503,13 +622,13 @@ namespace AreWeThereYet.Utils
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
                 var timeSinceRefresh = (DateTime.Now - _lastTerrainRefresh).TotalMilliseconds;
-                
+
                 evt.Graphics.DrawText(
                     $"Terrain: Manual Memory Reading (Real-time) | Refresh: {timeSinceRefresh:F0}ms ago | Threshold: {TerrainValueForCollision}",
                     new Vector2(10, 200),
                     SharpDX.Color.White
                 );
-                
+
                 evt.Graphics.DrawText(
                     $"Terrain Data: {_terrainData?.Length ?? 0} rows (LayerMelee + LayerRanged)",
                     new Vector2(10, 220),
@@ -521,7 +640,7 @@ namespace AreWeThereYet.Utils
                 {
                     var cursorRayStatus = _cursorRays[0].IsVisible ? "CLEAR" : "BLOCKED";
                     var cursorRayColor = _cursorRays[0].IsVisible ? SharpDX.Color.Green : SharpDX.Color.Red;
-                    
+
                     evt.Graphics.DrawText(
                         $"Cursor Ray: {cursorRayStatus} | Position: ({_lastCursorPosition.X:F1}, {_lastCursorPosition.Y:F1})",
                         new Vector2(10, 240),

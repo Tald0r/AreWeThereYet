@@ -721,48 +721,49 @@ public class AutoPilot
             yield return new WaitTime(50);
         }
     }
-    
+
     private bool ShouldUseDash(Vector2 targetPosition)
     {
         try
         {
-            // Comprehensive null checks
-            if (LineOfSight == null || 
+            // 1. Initial checks
+            if (LineOfSight == null ||
                 AreWeThereYet.Instance?.GameController?.Player?.GridPos == null ||
                 AreWeThereYet.Instance?.Settings?.AutoPilot?.DashEnabled?.Value != true)
                 return false;
 
             var playerPos = AreWeThereYet.Instance.GameController.Player.GridPos;
             var distance = Vector2.Distance(playerPos, targetPosition);
-            
+
             var minDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMinDistance.Value;
             var maxDistance = AreWeThereYet.Instance.Settings.AutoPilot.Dash.DashMaxDistance.Value;
-            
+
             if (distance < minDistance || distance > maxDistance)
             {
                 if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
                     AreWeThereYet.Instance.LogMessage($"ShouldUseDash: Distance {distance:F1} outside dash range ({minDistance}-{maxDistance})");
                 return false;
-            }            
-            
-            // Convert SharpDX.Vector2 to System.Numerics.Vector2 for HasLineOfSight
+            }
+
+            // 2. Convert to System.Numerics.Vector2
             var playerPosNumerics = new System.Numerics.Vector2(playerPos.X, playerPos.Y);
             var targetPosNumerics = new System.Numerics.Vector2(targetPosition.X, targetPosition.Y);
 
-            // This is where exceptions were crashing your coroutine
-            var hasLineOfSight = LineOfSight.HasLineOfSight(playerPosNumerics, targetPosNumerics);
-            var shouldDash = !hasLineOfSight && distance >= minDistance;
-            
+            // 3. THE FIX: Call the new method and check the result
+            var pathStatus = LineOfSight.GetPathStatus(playerPosNumerics, targetPosNumerics);
+
+            // The new logic: only dash if the path is specifically blocked by a dashable obstacle.
+            var shouldDash = pathStatus == PathStatus.Dashable;
+
             if (AreWeThereYet.Instance.Settings.Debug.ShowDetailedDebug?.Value == true)
             {
-                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, hasLineOfSight: {hasLineOfSight})");
+                AreWeThereYet.Instance.LogMessage($"ShouldUseDash: RESULT = {shouldDash} (distance: {distance:F1}, pathStatus: {pathStatus})");
             }
-            
-            return shouldDash;            
+
+            return shouldDash;
         }
         catch (Exception ex)
         {
-            // Log the error but DON'T let it bubble up to crash the coroutine
             AreWeThereYet.Instance.LogError($"ShouldUseDash failed: {ex.Message}");
             return false; // Safe fallback - don't dash if terrain check fails
         }
