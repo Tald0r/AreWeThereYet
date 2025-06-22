@@ -375,6 +375,7 @@ public class AutoPilot
             // =================================================================
             // SECTION 1: INITIAL CHECKS & UI CLEANUP
             // =================================================================
+            
             if (!AreWeThereYet.Instance.Settings.Enable.Value || !AreWeThereYet.Instance.Settings.AutoPilot.Enabled.Value || AreWeThereYet.Instance.localPlayer == null || !AreWeThereYet.Instance.localPlayer.IsAlive ||
                 !AreWeThereYet.Instance.GameController.IsForeGroundCache || MenuWindow.IsOpened || AreWeThereYet.Instance.GameController.IsLoading || !AreWeThereYet.Instance.GameController.InGame)
             {
@@ -393,8 +394,14 @@ public class AutoPilot
             // }
 
             followTarget = GetFollowingTarget();
-            var leaderPartyElement = GetLeaderPartyElement();
+            var leaderPartyElement = GetLeaderPartyElement();            
+            
+            
+            // =================================================================
+            // SECTION 2: TASK GENERATION LOGIC
+            // =================================================================
 
+            // Case 1: The leader entity is NOT currently visible.
             if (followTarget == null && !leaderPartyElement.ZoneName.Equals(AreWeThereYet.Instance.GameController?.Area.CurrentArea.DisplayName) && !_isTransitioning)
             {
                 // Track zone changes for buffer timing
@@ -468,6 +475,8 @@ public class AutoPilot
                     yield return new WaitTime(200); // Wait a bit longer for zone info to stabilize
                 }
             }
+            
+            // Case 2: The leader is currently visible and in the same zone.
             else if (followTarget != null)
             {
                 // Reset zone tracking when leader is found
@@ -510,6 +519,7 @@ public class AutoPilot
                             tasks.Add(new TaskNode(followTarget.Pos, AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance));
                     }
 
+                    // --- Quest Item and other interaction logic ---
                     var isHideout = (bool)AreWeThereYet.Instance?.GameController?.Area?.CurrentArea?.IsHideout;
                     if (!isHideout)
                     {
@@ -532,7 +542,6 @@ public class AutoPilot
                             AreWeThereYet.Instance.LogMessage($"Quest loot NOT added - Distance: {distance:F1}, TooFar: {distance >= AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value}, HasLootTask: {hasLootTask}");
                         }
 
-
                         var mercenaryOptIn = GetMercenaryOptInButton();
                         if (mercenaryOptIn != null &&
                             Vector3.Distance(AreWeThereYet.Instance.playerPosition, mercenaryOptIn.ItemOnGround.Pos) < AreWeThereYet.Instance.Settings.AutoPilot.TransitionDistance.Value &&
@@ -550,7 +559,12 @@ public class AutoPilot
                 if (followTarget?.Pos != null)
                     lastTargetPosition = followTarget.Pos;
             }
-
+            
+            // =================================================================
+            // SECTION 3: TASK EXECUTION STATE MACHINE
+            // =================================================================
+            // This section executes whatever task is at the front of the queue.
+            
             if (tasks?.Count > 0)
             {
                 var currentTask = tasks.First();
@@ -568,28 +582,25 @@ public class AutoPilot
                 switch (currentTask.Type)
                 {
                     case TaskNodeType.Movement:
-                        if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled &&
-                        ShouldUseDash(currentTask.WorldPosition.WorldToGrid()))
                         {
                             yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
                             yield return new WaitTime(random.Next(25) + 30);
-                            Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.DashKey);
-                            yield return new WaitTime(random.Next(25) + 30);
-                        }
-                        else
-                        {
-                            yield return Mouse.SetCursorPosHuman(Helper.WorldToValidScreenPosition(currentTask.WorldPosition));
-                            yield return new WaitTime(random.Next(25) + 30);
-                            Keyboard.KeyDown(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                            yield return new WaitTime(random.Next(25) + 30);
-                            Keyboard.KeyUp(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
-                        }
 
-                        if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
-                            tasks.RemoveAt(0);
-                        yield return null;
-                        yield return null;
-                        continue;
+                            if (AreWeThereYet.Instance.Settings.AutoPilot.DashEnabled && ShouldUseDash(currentTask.WorldPosition.WorldToGrid()))
+                            {
+                                Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.DashKey);
+                            }
+                            else
+                            {
+                                Keyboard.KeyPress(AreWeThereYet.Instance.Settings.AutoPilot.MoveKey);
+                            }
+                            yield return new WaitTime(random.Next(25) + 30);
+
+                            if (taskDistance <= AreWeThereYet.Instance.Settings.AutoPilot.KeepWithinDistance.Value * 1.5)
+                                tasks.RemoveAt(0);
+                            yield return null;
+                            continue;
+                        }
 
                     case TaskNodeType.Loot:
                         {
@@ -640,7 +651,7 @@ public class AutoPilot
                                 yield return null;
                                 continue;
                             }
-                            
+
                             // SET THE FLAG: We are about to change zones.
                             _isTransitioning = true;
 
